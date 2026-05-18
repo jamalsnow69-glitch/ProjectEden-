@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import AuthPanel from "./components/AuthPanel";
 
 const API_BASE = (() => {
   try {

@@ -8,15 +8,11 @@ beautifulsoup4
 lxml
 torch
 numpy
-jinja
 jinja3
 sqlalchemy
 psycopg2-binary
 alembic
 pytest
-pytest-cov
-pytest-asyncio
-pytest-mock
 tavily-python
 groq
 openai
@@ -28,8 +24,3 @@ pyjwt
 passlib
 python-multipart
 python-jose
-python-jose[cryptography]
-python-jose[pycryptodome]
-python-jose[ecdsa]
-python-jose[pycryptodomex]
-python-jose[pycryptodomex-ecdsa]

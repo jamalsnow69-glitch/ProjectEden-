@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import AuthPanel from "./components/AuthPanel";
+import { createClient } from "@supabase/supabase-js";
+
+const viteEnv = import.meta.env || {};
+const SUPABASE_URL = viteEnv.VITE_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = viteEnv.VITE_SUPABASE_ANON_KEY || "";
+const hasSupabaseConfig = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+const supabase = hasSupabaseConfig ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const APP_VERSION = "EdenV1.2.0";
+const APP_VERSION_LABEL = "v1.2.0";
 
 const EDEN_ASSETS = {
   logos: {
@@ -51,7 +59,8 @@ const THEME_PRESETS = [
 ];
 
 const VERSION_HISTORY = [
-  "v1.1.2 - AuthPanel wired into App.jsx with login, signup, OAuth, and 2FA modal",
+  "v1.2.0 - Supabase Auth wired in, Render auth unlinked, subscriptions menu placeholder added",
+  "v1.1.2 - Legacy AuthPanel wired into App.jsx with login, signup, OAuth, and 2FA modal",
   "v1.1.1 - Fixed EDEN_ASSETS syntax and stabilized MP3-first audio",
   "v1.1.0 - MP3-first sound system with fallback tones disabled by default",
   "v1.0.8 - Single-file App.jsx build fix",
@@ -164,7 +173,7 @@ function downloadTextFile(filename, content, mimeType = "text/plain") {
   URL.revokeObjectURL(url);
 }
 
-function exportChat({ format, chat, messages, appVersion = "EdenV1.1.2" }) {
+function exportChat({ format, chat, messages, appVersion = APP_VERSION }) {
   const payload = {
     app: "Project Eden",
     version: appVersion,
@@ -324,6 +333,7 @@ function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage
     { id: "account", label: "Account Overview" },
     { id: "settings", label: "Settings" },
     { id: "customize", label: "Customize" },
+    { id: "subscriptions", label: "Subscriptions" },
     { id: "legal", label: "Legal" },
     { id: "versions", label: "Versions" },
   ];
@@ -376,7 +386,7 @@ function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage
 
 function MobileNav({ currentTheme, profilePic, isLoggedIn, recentChats, activePage, username, onNavigate, onStartNewChat, onLogin, onLogout }) {
   const [open, setOpen] = useState(false);
-  const navItems = ["chat", "saved-chats", "uploads", "call", "account", "settings", "customize", "legal", "versions"];
+  const navItems = ["chat", "saved-chats", "uploads", "call", "account", "subscriptions", "settings", "customize", "legal", "versions"];
 
   function go(page) {
     onNavigate(page);
@@ -724,6 +734,41 @@ function AccountOverview({ currentTheme, isLoggedIn, username, email, userId, pr
   );
 }
 
+function SubscriptionsPage({ currentTheme, isLoggedIn, username, onLogin }) {
+  const plans = [
+    { name: "Free", price: "$0", description: "Basic Eden access while Project Eden is in development." },
+    { name: "Plus", price: "Coming Soon", description: "Higher limits, saved cloud history, priority responses, and profile upgrades later." },
+    { name: "Founder", price: "Coming Soon", description: "Early supporter plan for future subscription testing." },
+  ];
+
+  return (
+    <section className={`eden-page flex-1 overflow-y-auto rounded-3xl border ${currentTheme.border} ${currentTheme.card} p-6`}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-[0.15em]">SUBSCRIPTIONS</h2>
+          <p className="mt-2 text-sm opacity-70">Subscription framework placeholder. Components, utilities, billing tables, and Supabase plan sync can be connected later.</p>
+        </div>
+        {isLoggedIn ? (
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-3 text-sm">Signed in as <span className="font-bold">{username}</span></div>
+        ) : (
+          <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">Login With Google</button>
+        )}
+      </div>
+      <div className="mt-6 grid gap-4 xl:grid-cols-3">
+        {plans.map((plan) => (
+          <div key={plan.name} className="eden-card rounded-3xl border border-white/10 bg-black/20 p-5">
+            <p className="text-xs uppercase tracking-[0.25em] opacity-50">Plan</p>
+            <h3 className="mt-2 text-2xl font-bold">{plan.name}</h3>
+            <p className="mt-3 text-xl font-bold">{plan.price}</p>
+            <p className="mt-4 text-sm leading-relaxed opacity-70">{plan.description}</p>
+            <button type="button" disabled className="mt-5 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold opacity-60">Billing Not Connected Yet</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function LegalPage({ currentTheme }) {
   const sections = [
     { title: "Terms of Service", text: "Use Project Eden responsibly, legally, and safely. Future production terms should be reviewed before launch." },
@@ -884,7 +929,7 @@ export default function App() {
   const [activePage, setActivePage] = useState("chat");
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState("");
-  const [messages, setMessages] = useState([{ sender: "eden", text: "I am Eden. Log in to message me and save chats." }]);
+  const [messages, setMessages] = useState([{ sender: "eden", text: "I am Eden. Log in with Google to message me and save chats." }]);
 
   const [recentChats, setRecentChats] = useState(() => readJson("eden_saved_chats", []));
   const [chatDatabase, setChatDatabase] = useState(() => readJson("eden_chat_database", {}));
@@ -907,15 +952,15 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
-  const [authToken, setAuthToken] = useState(localStorage.getItem("eden_token") || "");
+  const [authToken, setAuthToken] = useState("");
+  const [supabaseSession, setSupabaseSession] = useState(null);
+  const [supabaseUser, setSupabaseUser] = useState(null);
   const [username, setUsername] = useState(localStorage.getItem("eden_user") || "Guest");
   const [email, setEmail] = useState(localStorage.getItem("eden_email") || "No email connected");
   const [userId] = useState(createUserId);
   const [profilePic, setProfilePic] = useState(localStorage.getItem("eden_pfp") || EDEN_ASSETS.placeholders.profile);
 
   const [commandOpen, setCommandOpen] = useState(false);
-  const [authPanelOpen, setAuthPanelOpen] = useState(false);
-  const [authPanelMode, setAuthPanelMode] = useState("login");
   const [toasts, setToasts] = useState([]);
   const [confirmState, setConfirmState] = useState({ open: false, title: "", description: "", confirmLabel: "Confirm", danger: false, onConfirm: null });
 
@@ -1081,32 +1126,34 @@ export default function App() {
     setConfirmState({ open: false, title: "", description: "", confirmLabel: "Confirm", danger: false, onConfirm: null });
   }
 
-  function openAuthPanel(mode = "login") {
-    setAuthPanelMode(mode);
-    setAuthPanelOpen(true);
-    playSound("panelOpen", { force: true });
+
+  function applySupabaseSession(session) {
+    const user = session?.user || null;
+    const metadata = user?.user_metadata || {};
+    const nextToken = session?.access_token || "";
+    const nextUsername = metadata.full_name || metadata.name || metadata.user_name || user?.email?.split("@")[0] || "User";
+    const nextEmail = user?.email || "No email connected";
+    const nextPicture = metadata.avatar_url || metadata.picture || localStorage.getItem("eden_pfp") || EDEN_ASSETS.placeholders.profile;
+
+    setSupabaseSession(session || null);
+    setSupabaseUser(user);
+    setAuthToken(nextToken);
+    setUsername(nextToken ? nextUsername : "Guest");
+    setEmail(nextToken ? nextEmail : "No email connected");
+
+    if (nextToken) {
+      localStorage.setItem("eden_user", nextUsername);
+      localStorage.setItem("eden_email", nextEmail);
+      localStorage.setItem("eden_token", nextToken);
+      if (nextPicture) {
+        localStorage.setItem("eden_pfp", nextPicture);
+        setProfilePic(nextPicture);
+      }
+    } else {
+      localStorage.removeItem("eden_token");
+    }
   }
 
-  function closeAuthPanel() {
-    setAuthPanelOpen(false);
-    playSound("panelClose", { force: true });
-  }
-
-  function handleAuthSuccess(result = {}) {
-    const user = result.user || {};
-    const nextToken = result.token || localStorage.getItem("eden_token") || "";
-    const nextUsername = user.username || localStorage.getItem("eden_user") || "User";
-    const nextEmail = user.email || localStorage.getItem("eden_email") || "No email connected";
-    const nextPicture = user.avatar_url || localStorage.getItem("eden_pfp") || profilePic;
-
-    if (nextToken) setAuthToken(nextToken);
-    setUsername(nextUsername);
-    setEmail(nextEmail);
-    setProfilePic(nextPicture);
-    setActivePage("chat");
-    playSound("login", { force: true });
-    pushToast("success", "Logged in", `Welcome, ${nextUsername}.`);
-  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1120,44 +1167,44 @@ export default function App() {
     preloadSounds();
   }, []);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    const usernameParam = params.get("username");
-    const emailParam = params.get("email");
-    const pictureParam = params.get("picture");
-    const requires2FA = params.get("requires_2fa") === "true";
-    const pendingToken = params.get("pending_token") || "";
 
-    if (token) {
-      localStorage.setItem("eden_token", token);
-      setAuthToken(token);
-      loadBackendChats(token);
-      playSound("login", { force: true });
-      pushToast("success", "Logged in", "Authentication connected to Eden.");
+  useEffect(() => {
+    if (!supabase) {
+      console.warn("Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to Frontend/.env.");
+      return undefined;
     }
-    if (usernameParam) {
-      localStorage.setItem("eden_user", usernameParam);
-      setUsername(usernameParam);
-    }
-    if (emailParam) {
-      localStorage.setItem("eden_email", emailParam);
-      setEmail(emailParam);
-    }
-    if (pictureParam) {
-      localStorage.setItem("eden_pfp", pictureParam);
-      setProfilePic(pictureParam);
-    }
-    if (requires2FA && pendingToken) {
-      localStorage.setItem("eden_pending_2fa_token", pendingToken);
-      setAuthPanelMode("2fa-login");
-      setAuthPanelOpen(true);
-      pushToast("warning", "2FA required", "Enter your authenticator or backup code.");
-    }
-    if (token || usernameParam || emailParam || pictureParam || requires2FA || pendingToken) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
+
+    let active = true;
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        console.warn("Supabase session load failed", error);
+        return;
+      }
+      applySupabaseSession(data.session || null);
+      if (data.session?.access_token) loadBackendChats(data.session.access_token);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      applySupabaseSession(session || null);
+      if (event === "SIGNED_IN") {
+        setActivePage("chat");
+        playSound("login", { force: true });
+        pushToast("success", "Logged in", "Google login connected through Supabase.");
+        if (session?.access_token) loadBackendChats(session.access_token);
+      }
+      if (event === "SIGNED_OUT") {
+        setMessages([{ sender: "eden", text: "Logged out. Log in with Google to message Eden." }]);
+      }
+    });
+
+    return () => {
+      active = false;
+      authListener?.subscription?.unsubscribe?.();
+    };
   }, []);
+
 
   useEffect(() => {
     if (authToken) loadBackendChats(authToken);
@@ -1239,23 +1286,45 @@ export default function App() {
     pushToast("success", "Theme changed", `Theme switched to ${themeId}.`);
   }
 
-  function loginWithGoogle() {
-    openAuthPanel("login");
+  async function loginWithGoogle() {
+    if (!supabase) {
+      playSound("error", { force: true });
+      pushToast("error", "Supabase not configured", "Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to Frontend/.env, then restart Vite.");
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
+      },
+    });
+
+    if (error) {
+      playSound("error", { force: true });
+      pushToast("error", "Google login failed", error.message);
+    }
   }
 
-  function logout() {
+  async function logout() {
+    if (supabase) await supabase.auth.signOut();
     localStorage.removeItem("eden_token");
     localStorage.removeItem("eden_user");
     localStorage.removeItem("eden_email");
-    localStorage.removeItem("eden_pfp");
     localStorage.removeItem("eden_pending_2fa_token");
+    setSupabaseSession(null);
+    setSupabaseUser(null);
     setAuthToken("");
     setUsername("Guest");
     setEmail("No email connected");
     setActivePage("chat");
     window.speechSynthesis?.cancel();
     stopThinkingSound();
-    setMessages([{ sender: "eden", text: "Logged out. Log in to message Eden." }]);
+    setMessages([{ sender: "eden", text: "Logged out. Log in with Google to message Eden." }]);
     playSound("logout", { force: true });
     pushToast("info", "Logged out", "You have been signed out of Eden.");
   }
@@ -1308,10 +1377,10 @@ export default function App() {
   function startNewChat() {
     if (!isLoggedIn) {
       setActivePage("chat");
-      setMessages([{ sender: "eden", text: "Please log in before creating saved chats." }]);
+      setMessages([{ sender: "eden", text: "Please log in with Google before creating saved chats." }]);
       playSound("warning", { force: true });
       pushToast("warning", "Login required", "Log in before creating saved chats.");
-      openAuthPanel("login");
+      loginWithGoogle();
       return;
     }
     const starterMessages = [{ sender: "eden", text: "New chat initialized." }];
@@ -1394,10 +1463,10 @@ export default function App() {
     const userMessage = input.trim();
     if (!userMessage) return;
     if (!isLoggedIn) {
-      setMessages((current) => [...current, { sender: "eden", text: "Please log in before messaging Eden." }]);
+      setMessages((current) => [...current, { sender: "eden", text: "Please log in with Google before messaging Eden." }]);
       playSound("warning", { force: true });
       pushToast("warning", "Login required", "Log in before messaging Eden.");
-      openAuthPanel("login");
+      loginWithGoogle();
       return;
     }
 
@@ -1518,10 +1587,10 @@ export default function App() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!isLoggedIn) {
-      setMessages((current) => [...current, { sender: "eden", text: "Please log in before uploading files." }]);
+      setMessages((current) => [...current, { sender: "eden", text: "Please log in with Google before uploading files." }]);
       playSound("warning", { force: true });
       pushToast("warning", "Login required", "Log in before uploading files.");
-      openAuthPanel("login");
+      loginWithGoogle();
       event.target.value = "";
       return;
     }
@@ -1602,12 +1671,13 @@ export default function App() {
 
   function renderPage() {
     if (activePage === "chat") return <ChatShell currentTheme={currentTheme} messages={messages} input={input} isLoggedIn={isLoggedIn} isSending={isSending} isUploading={isUploading} isListening={isListening} chatEndRef={chatEndRef} onInputChange={setInput} onSendMessage={sendMessage} onUploadFile={uploadFile} onVoiceInput={handleVoiceInput} onStartNewChat={startNewChat} />;
-    if (activePage === "saved-chats") return <SavedChatsPage chats={recentChats} chatDatabase={chatDatabase} currentTheme={currentTheme} onStartNewChat={startNewChat} onOpenChat={openChat} onRenameChat={renameChat} onDeleteChat={confirmDeleteChat} appVersion="EdenV1.1.2" />;
+    if (activePage === "saved-chats") return <SavedChatsPage chats={recentChats} chatDatabase={chatDatabase} currentTheme={currentTheme} onStartNewChat={startNewChat} onOpenChat={openChat} onRenameChat={renameChat} onDeleteChat={confirmDeleteChat} appVersion={APP_VERSION} />;
     if (activePage === "customize") return <CustomizePage currentTheme={currentTheme} themePreset={themePreset} themePresets={THEME_PRESETS} onThemeChange={changeTheme} />;
     if (activePage === "settings") return <SettingsPage currentTheme={currentTheme} voiceEnabled={voiceEnabled} autoReadResponses={autoReadResponses} reasoningLevel={reasoningLevel} memoryDepth={memoryDepth} soundEnabled={soundEnabled} startupSoundEnabled={startupSoundEnabled} thinkingSoundEnabled={thinkingSoundEnabled} soundVolume={soundVolume} audioUnlocked={audioUnlocked} useFallbackSounds={useFallbackSounds} reasoningLevels={REASONING_LEVELS} memoryDepths={MEMORY_DEPTHS} sounds={EDEN_SOUNDS} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onReasoningLevelChange={setReasoningLevel} onMemoryDepthChange={setMemoryDepth} onSoundEnabledChange={setSoundEnabled} onStartupSoundEnabledChange={setStartupSoundEnabled} onThinkingSoundEnabledChange={setThinkingSoundEnabled} onSoundVolumeChange={setSoundVolume} onFallbackSoundsChange={setUseFallbackSounds} onUnlockAudio={unlockAudio} onPlaySound={playSound} />;
-    if (activePage === "account") return <AccountOverview currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} email={email} userId={userId} profilePic={profilePic} recentChats={recentChats} uploadedFiles={uploadedFiles} onProfilePicChange={handleProfilePicChange} onLogin={loginWithGoogle} onLogout={confirmLogout} onOpen2FA={() => openAuthPanel("2fa-manage")} />;
+    if (activePage === "account") return <AccountOverview currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} email={email} userId={userId} profilePic={profilePic} recentChats={recentChats} uploadedFiles={uploadedFiles} onProfilePicChange={handleProfilePicChange} onLogin={loginWithGoogle} onLogout={confirmLogout} onOpen2FA={() => pushToast("info", "2FA moved", "Supabase MFA can be connected later from a dedicated account security component.")} />;
+    if (activePage === "subscriptions") return <SubscriptionsPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} onLogin={loginWithGoogle} />;
     if (activePage === "legal") return <LegalPage currentTheme={currentTheme} />;
-    if (activePage === "versions") return <VersionHistory currentTheme={currentTheme} versions={VERSION_HISTORY} currentVersion="v1.1.2" />;
+    if (activePage === "versions") return <VersionHistory currentTheme={currentTheme} versions={VERSION_HISTORY} currentVersion={APP_VERSION_LABEL} />;
     if (activePage === "call") return <CallPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} voiceEnabled={voiceEnabled} isListening={isListening} autoReadResponses={autoReadResponses} onVoiceInput={handleVoiceInput} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onLogin={loginWithGoogle} />;
     if (activePage === "uploads") return <UploadsPage currentTheme={currentTheme} uploadedFiles={uploadedFiles} isLoggedIn={isLoggedIn} isUploading={isUploading} onUploadFile={uploadFile} onClearUploads={clearUploads} onLogin={loginWithGoogle} />;
     return null;
@@ -1650,13 +1720,6 @@ export default function App() {
           {renderPage()}
         </section>
       </div>
-      {authPanelOpen ? (
-        <div className="fixed inset-0 z-[1002] overflow-y-auto bg-black/75 p-5 backdrop-blur-sm">
-          <div className="mx-auto mt-8 w-full max-w-5xl">
-            <AuthPanel currentTheme={currentTheme} mode={authPanelMode} onModeChange={setAuthPanelMode} onAuthSuccess={handleAuthSuccess} onClose={closeAuthPanel} onToast={pushToast} />
-          </div>
-        </div>
-      ) : null}
       <CommandPalette open={commandOpen} currentTheme={currentTheme} recentChats={recentChats} isLoggedIn={isLoggedIn} onClose={() => { setCommandOpen(false); playSound("panelClose", { force: true }); }} onNavigate={setActivePage} onStartNewChat={startNewChat} onOpenChat={openChat} onLogin={loginWithGoogle} />
       <ConfirmModal open={confirmState.open} currentTheme={currentTheme} title={confirmState.title} description={confirmState.description} confirmLabel={confirmState.confirmLabel} danger={confirmState.danger} onCancel={closeConfirm} onConfirm={() => { if (typeof confirmState.onConfirm === "function") confirmState.onConfirm(); closeConfirm(); }} />
       <ToastStack toasts={toasts} currentTheme={currentTheme} onDismiss={dismissToast} />

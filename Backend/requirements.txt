@@ -8,7 +8,6 @@ beautifulsoup4
 lxml
 torch
 pytorch
-python3
 numpy
 jinja
 jinja3

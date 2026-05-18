@@ -6,8 +6,8 @@ const SUPABASE_URL = viteEnv.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = viteEnv.VITE_SUPABASE_ANON_KEY || "";
 const hasSupabaseConfig = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 const supabase = hasSupabaseConfig ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-const APP_VERSION = "EdenV1.2.0";
-const APP_VERSION_LABEL = "v1.2.0";
+const APP_VERSION = "EdenV1.2.1";
+const APP_VERSION_LABEL = "v1.2.1";
 
 const EDEN_ASSETS = {
   logos: {
@@ -59,6 +59,7 @@ const THEME_PRESETS = [
 ];
 
 const VERSION_HISTORY = [
+  "v1.2.1 - Locked subscriptions page to display-only placeholder and tightened Supabase OAuth flow",
   "v1.2.0 - Supabase Auth wired in, Render auth unlinked, subscriptions menu placeholder added",
   "v1.1.2 - Legacy AuthPanel wired into App.jsx with login, signup, OAuth, and 2FA modal",
   "v1.1.1 - Fixed EDEN_ASSETS syntax and stabilized MP3-first audio",
@@ -737,8 +738,8 @@ function AccountOverview({ currentTheme, isLoggedIn, username, email, userId, pr
 function SubscriptionsPage({ currentTheme, isLoggedIn, username, onLogin }) {
   const plans = [
     { name: "Free", price: "$0", description: "Basic Eden access while Project Eden is in development." },
-    { name: "Plus", price: "Coming Soon", description: "Higher limits, saved cloud history, priority responses, and profile upgrades later." },
-    { name: "Founder", price: "Coming Soon", description: "Early supporter plan for future subscription testing." },
+    { name: "Plus", price: "Coming Soon", description: "Future higher limits, saved cloud history, priority responses, and profile upgrades." },
+    { name: "Founder", price: "Coming Soon", description: "Future early-supporter plan. Billing is not connected in this file." },
   ];
 
   return (
@@ -746,7 +747,7 @@ function SubscriptionsPage({ currentTheme, isLoggedIn, username, onLogin }) {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-[0.15em]">SUBSCRIPTIONS</h2>
-          <p className="mt-2 text-sm opacity-70">Subscription framework placeholder. Components, utilities, billing tables, and Supabase plan sync can be connected later.</p>
+          <p className="mt-2 text-sm opacity-70">Display-only placeholder. No plan can be selected here. No billing request is made.</p>
         </div>
         {isLoggedIn ? (
           <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-3 text-sm">Signed in as <span className="font-bold">{username}</span></div>
@@ -754,14 +755,17 @@ function SubscriptionsPage({ currentTheme, isLoggedIn, username, onLogin }) {
           <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">Login With Google</button>
         )}
       </div>
+      <div className="mt-6 rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-5 text-sm text-yellow-100">
+        Subscriptions are not live. This page contains no checkout, no local plan switching, no Render billing calls, and no Supabase plan update calls.
+      </div>
       <div className="mt-6 grid gap-4 xl:grid-cols-3">
         {plans.map((plan) => (
           <div key={plan.name} className="eden-card rounded-3xl border border-white/10 bg-black/20 p-5">
-            <p className="text-xs uppercase tracking-[0.25em] opacity-50">Plan</p>
+            <p className="text-xs uppercase tracking-[0.25em] opacity-50">Future Plan</p>
             <h3 className="mt-2 text-2xl font-bold">{plan.name}</h3>
             <p className="mt-3 text-xl font-bold">{plan.price}</p>
             <p className="mt-4 text-sm leading-relaxed opacity-70">{plan.description}</p>
-            <button type="button" disabled className="mt-5 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold opacity-60">Billing Not Connected Yet</button>
+            <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-center text-sm font-bold opacity-60">Locked Placeholder</div>
           </div>
         ))}
       </div>

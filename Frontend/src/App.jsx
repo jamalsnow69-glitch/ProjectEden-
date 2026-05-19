@@ -1417,17 +1417,25 @@ export default function App() {
     saveChatMessages(activeSessionId, pendingMessages);
     await saveBackendMessage(activeSessionId, userEntry);
 
-    let fullResponse = "";
-    try {
-      const response = await fetch("/chat", {
-        method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ message: userMessage, session_id: activeSessionId, reasoning_level: reasoningLevel, memory_depth: memoryDepth }),
-      });
-      if (!response.ok) {
-        const rawText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${rawText}`);
-      }
+  let fullResponse = "";
+try {
+  const API_BASE = import.meta.env.VITE_API_BASE || "";
+
+  const response = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    headers: getAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      message: userMessage,
+      session_id: activeSessionId,
+      reasoning_level: reasoningLevel,
+      memory_depth: memoryDepth,
+    }),
+  });
+
+  if (!response.ok) {
+    const rawText = await response.text();
+    throw new Error(`HTTP ${response.status}: ${rawText}`);
+  }
 
       const contentType = response.headers.get("content-type") || "";
       if (response.body && contentType.includes("text/event-stream")) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE || "";
 
 function getBackendBase() {
   const origin = window.location.origin;
@@ -13,7 +13,7 @@ function getBackendBase() {
     return origin.replace("-5173", "-8000");
   }
 
-  return origin;
+ return API_BASE || origin;
 }
 
 const authClient = {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AuthPanel from "./components/AuthPanel";
+import SubscriptionsPage from "./components/Subscriptions";
 
 const EDEN_ASSETS = {
   logos: {
@@ -51,6 +52,7 @@ const THEME_PRESETS = [
 ];
 
 const VERSION_HISTORY = [
+  "v1.1.3 - Subscriptions page with plan cards, FAQ, billing notice, and manage/cancel controls",
   "v1.1.2 - AuthPanel wired into App.jsx with login, signup, OAuth, and 2FA modal",
   "v1.1.1 - Fixed EDEN_ASSETS syntax and stabilized MP3-first audio",
   "v1.1.0 - MP3-first sound system with fallback tones disabled by default",
@@ -164,7 +166,7 @@ function downloadTextFile(filename, content, mimeType = "text/plain") {
   URL.revokeObjectURL(url);
 }
 
-function exportChat({ format, chat, messages, appVersion = "EdenV1.1.2" }) {
+function exportChat({ format, chat, messages, appVersion = "EdenV1.1.3" }) {
   const payload = {
     app: "Project Eden",
     version: appVersion,
@@ -324,6 +326,7 @@ function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage
     { id: "account", label: "Account Overview" },
     { id: "settings", label: "Settings" },
     { id: "customize", label: "Customize" },
+    { id: "subscriptions", label: "Subscriptions" },
     { id: "legal", label: "Legal" },
     { id: "versions", label: "Versions" },
   ];
@@ -376,7 +379,7 @@ function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage
 
 function MobileNav({ currentTheme, profilePic, isLoggedIn, recentChats, activePage, username, onNavigate, onStartNewChat, onLogin, onLogout }) {
   const [open, setOpen] = useState(false);
-  const navItems = ["chat", "saved-chats", "uploads", "call", "account", "settings", "customize", "legal", "versions"];
+  const navItems = ["chat", "saved-chats", "uploads", "call", "account", "settings", "customize", "subscriptions", "legal", "versions"];
 
   function go(page) {
     onNavigate(page);
@@ -844,7 +847,7 @@ function CommandPalette({ open, currentTheme, recentChats, onClose, onNavigate, 
   const [query, setQuery] = useState("");
   if (!open) return null;
 
-  const pages = ["chat", "saved-chats", "uploads", "call", "account", "settings", "customize", "legal", "versions"];
+  const pages = ["chat", "saved-chats", "uploads", "call", "account", "settings", "customize", "subscriptions", "legal", "versions"];
   const actions = [
     { type: "action", id: "new-chat", label: "Start New Chat", run: onStartNewChat },
     ...pages.map((page) => ({ type: "page", id: page, label: `Open ${page.replace(/-/g, " ")}`, run: () => onNavigate(page) })),
@@ -925,7 +928,10 @@ export default function App() {
   const audioCacheRef = useRef({});
   const audioContextRef = useRef(null);
 
-  const currentTheme = useMemo(() => THEME_PRESETS.find((theme) => theme.id === themePreset) || THEME_PRESETS[0], [themePreset]);
+  const currentTheme = useMemo(
+    () => THEME_PRESETS.find((theme) => theme.id === themePreset) || THEME_PRESETS[0],
+    [themePreset]
+  );
   const isLoggedIn = Boolean(authToken);
   const activeReasoning = REASONING_LEVELS.find((item) => item.id === reasoningLevel) || REASONING_LEVELS[1];
   const activeMemory = MEMORY_DEPTHS.find((item) => item.id === memoryDepth) || MEMORY_DEPTHS[1];
@@ -1417,25 +1423,17 @@ export default function App() {
     saveChatMessages(activeSessionId, pendingMessages);
     await saveBackendMessage(activeSessionId, userEntry);
 
-  let fullResponse = "";
-try {
-  const API_BASE = import.meta.env.VITE_API_BASE || "";
-
-  const response = await fetch(`${API_BASE}/chat`, {
-    method: "POST",
-    headers: getAuthHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      message: userMessage,
-      session_id: activeSessionId,
-      reasoning_level: reasoningLevel,
-      memory_depth: memoryDepth,
-    }),
-  });
-
-  if (!response.ok) {
-    const rawText = await response.text();
-    throw new Error(`HTTP ${response.status}: ${rawText}`);
-  }
+    let fullResponse = "";
+    try {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ message: userMessage, session_id: activeSessionId, reasoning_level: reasoningLevel, memory_depth: memoryDepth }),
+      });
+      if (!response.ok) {
+        const rawText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${rawText}`);
+      }
 
       const contentType = response.headers.get("content-type") || "";
       if (response.body && contentType.includes("text/event-stream")) {
@@ -1610,14 +1608,15 @@ try {
 
   function renderPage() {
     if (activePage === "chat") return <ChatShell currentTheme={currentTheme} messages={messages} input={input} isLoggedIn={isLoggedIn} isSending={isSending} isUploading={isUploading} isListening={isListening} chatEndRef={chatEndRef} onInputChange={setInput} onSendMessage={sendMessage} onUploadFile={uploadFile} onVoiceInput={handleVoiceInput} onStartNewChat={startNewChat} />;
-    if (activePage === "saved-chats") return <SavedChatsPage chats={recentChats} chatDatabase={chatDatabase} currentTheme={currentTheme} onStartNewChat={startNewChat} onOpenChat={openChat} onRenameChat={renameChat} onDeleteChat={confirmDeleteChat} appVersion="EdenV1.1.2" />;
+    if (activePage === "saved-chats") return <SavedChatsPage chats={recentChats} chatDatabase={chatDatabase} currentTheme={currentTheme} onStartNewChat={startNewChat} onOpenChat={openChat} onRenameChat={renameChat} onDeleteChat={confirmDeleteChat} appVersion="EdenV1.1.3" />;
     if (activePage === "customize") return <CustomizePage currentTheme={currentTheme} themePreset={themePreset} themePresets={THEME_PRESETS} onThemeChange={changeTheme} />;
     if (activePage === "settings") return <SettingsPage currentTheme={currentTheme} voiceEnabled={voiceEnabled} autoReadResponses={autoReadResponses} reasoningLevel={reasoningLevel} memoryDepth={memoryDepth} soundEnabled={soundEnabled} startupSoundEnabled={startupSoundEnabled} thinkingSoundEnabled={thinkingSoundEnabled} soundVolume={soundVolume} audioUnlocked={audioUnlocked} useFallbackSounds={useFallbackSounds} reasoningLevels={REASONING_LEVELS} memoryDepths={MEMORY_DEPTHS} sounds={EDEN_SOUNDS} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onReasoningLevelChange={setReasoningLevel} onMemoryDepthChange={setMemoryDepth} onSoundEnabledChange={setSoundEnabled} onStartupSoundEnabledChange={setStartupSoundEnabled} onThinkingSoundEnabledChange={setThinkingSoundEnabled} onSoundVolumeChange={setSoundVolume} onFallbackSoundsChange={setUseFallbackSounds} onUnlockAudio={unlockAudio} onPlaySound={playSound} />;
     if (activePage === "account") return <AccountOverview currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} email={email} userId={userId} profilePic={profilePic} recentChats={recentChats} uploadedFiles={uploadedFiles} onProfilePicChange={handleProfilePicChange} onLogin={loginWithGoogle} onLogout={confirmLogout} onOpen2FA={() => openAuthPanel("2fa-manage")} />;
     if (activePage === "legal") return <LegalPage currentTheme={currentTheme} />;
-    if (activePage === "versions") return <VersionHistory currentTheme={currentTheme} versions={VERSION_HISTORY} currentVersion="v1.1.2" />;
+    if (activePage === "versions") return <VersionHistory currentTheme={currentTheme} versions={VERSION_HISTORY} currentVersion="v1.1.3" />;
     if (activePage === "call") return <CallPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} voiceEnabled={voiceEnabled} isListening={isListening} autoReadResponses={autoReadResponses} onVoiceInput={handleVoiceInput} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onLogin={loginWithGoogle} />;
     if (activePage === "uploads") return <UploadsPage currentTheme={currentTheme} uploadedFiles={uploadedFiles} isLoggedIn={isLoggedIn} isUploading={isUploading} onUploadFile={uploadFile} onClearUploads={clearUploads} onLogin={loginWithGoogle} />;
+    if (activePage === "subscriptions") return <SubscriptionsPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} onLogin={loginWithGoogle} />;
     return null;
   }
 
@@ -1671,3 +1670,4 @@ try {
     </main>
   );
 }
+

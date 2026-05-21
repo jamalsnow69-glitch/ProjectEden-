@@ -85,6 +85,11 @@ const MEMORY_DEPTHS = [
 const EDEN_SOUNDS = EDEN_ASSETS.sounds;
 const STARTUP_LOADING_MS = 4200;
 
+const [accountId, setAccountId] = useState("");
+const [currentPlan, setCurrentPlan] = useState("free");
+const [subscriptionStatus, setSubscriptionStatus] = useState("active");
+const [backendOnline, setBackendOnline] = useState(false);
+
 const FALLBACK_TONES = {
   startup: [196, 294, 392],
   message: [784],

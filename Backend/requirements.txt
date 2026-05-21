@@ -17,3 +17,5 @@ pyotp
 python-multipart
 pypdf
 itsdangerous
+SQLAlchemy
+psycopg[binary]

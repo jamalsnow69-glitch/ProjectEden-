@@ -107,6 +107,8 @@ const FALLBACK_TONES = {
   panelClose: [550, 440, 330],
 };
 
+const API_BASE = import.meta.env.VITE_API_BASE || "";
+
 function readJson(key, fallback) {
   try {
     return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
@@ -1216,7 +1218,7 @@ export default function App() {
   async function loadBackendChats(token = authToken) {
     if (!token) return;
     try {
-      const response = await fetch("/chats", { headers: { Authorization: `Bearer ${token}` } });
+      const response = await fetch(`${API_BASE}/chats`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) return;
       const data = await response.json();
       setRecentChats(data.chats || []);
@@ -1228,7 +1230,7 @@ export default function App() {
   async function saveBackendMessage(chatId, message) {
     if (!authToken || !chatId || !message?.text) return;
     try {
-      await fetch(`/chats/${chatId}/messages`, {
+      await fetch(`${API_BASE}/chats/${chatId}/messages`, {
         method: "POST",
         headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(message),
@@ -1335,7 +1337,7 @@ export default function App() {
     setActivePage("chat");
     playSound("openChat", { force: true });
     try {
-      const response = await fetch(`/chats/${chat.id}/messages`, { headers: getAuthHeaders() });
+      const response = await fetch(`${API_BASE}/chats/${chat.id}/messages`, { headers: getAuthHeaders() });
       if (response.ok) {
         const data = await response.json();
         const backendMessages = data.messages || [];
@@ -1360,7 +1362,7 @@ export default function App() {
     playSound("renameChat", { force: true });
     pushToast("success", "Chat renamed", `Renamed to ${cleanName}.`);
     try {
-      await fetch(`/chats/${chatId}`, {
+      await fetch(`${API_BASE}/chats/${chatId}`, {
         method: "PATCH",
         headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ title: cleanName }),
@@ -1425,7 +1427,7 @@ export default function App() {
 
     let fullResponse = "";
     try {
-      const response = await fetch("/chat", {
+      const response = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ message: userMessage, session_id: activeSessionId, reasoning_level: reasoningLevel, memory_depth: memoryDepth }),
@@ -1544,7 +1546,7 @@ export default function App() {
     saveChatMessages(activeSessionId, uploadMessages);
 
     try {
-      const response = await fetch("/upload/analyze", { method: "POST", headers: { Authorization: `Bearer ${authToken}` }, body: formData });
+      const response = await fetch(`${API_BASE}/upload/analyze`, { method: "POST", headers: { Authorization: `Bearer ${authToken}` }, body: formData });
       const rawText = await response.text();
       let data = null;
       try { data = rawText ? JSON.parse(rawText) : null; } catch { data = null; }

@@ -1289,7 +1289,7 @@ export default function App() {
   async function createBackendChat(title, starterMessages = []) {
     if (!authToken) return createLocalChat(title, starterMessages);
     try {
-      const response = await fetch("/chats", {
+      const response = await fetch(`${API_BASE}/chats`, {
         method: "POST",
         headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ title }),
@@ -1380,7 +1380,7 @@ export default function App() {
       return updated;
     });
     try {
-      await fetch(`/chats/${chatId}`, { method: "DELETE", headers: getAuthHeaders() });
+      await fetch(`${API_BASE}/chats/${chatId}`, { method: "DELETE", headers: getAuthHeaders() });
     } catch {
       console.warn("Backend delete failed. Local delete saved.");
     }

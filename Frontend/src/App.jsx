@@ -52,6 +52,7 @@ const THEME_PRESETS = [
 ];
 
 const VERSION_HISTORY = [
+  "v1.1.5 - Added backend account ID loading, sidebar AI online status, subscription wiring, and logout profile reset",
   "v1.1.4 - Hotfixes: Fixed AI not Responding, instead replying with (Streaming Error 404 ...), fixed Bug where you cannot login with Discord Oauth. ",
   "v1.1.3 - Added Subscriptions page with plan cards, FAQ, billing notice, and manage/cancel controls",
   "v1.1.2 - Added AuthPanel wired into the App with login, signup, OAuth, and 2FA modal (not done)",
@@ -85,10 +86,6 @@ const MEMORY_DEPTHS = [
 const EDEN_SOUNDS = EDEN_ASSETS.sounds;
 const STARTUP_LOADING_MS = 4200;
 
-const [accountId, setAccountId] = useState("");
-const [currentPlan, setCurrentPlan] = useState("free");
-const [subscriptionStatus, setSubscriptionStatus] = useState("active");
-const [backendOnline, setBackendOnline] = useState(false);
 
 const FALLBACK_TONES = {
   startup: [196, 294, 392],
@@ -114,6 +111,7 @@ const FALLBACK_TONES = {
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+const APP_VERSION = "EdenV1.1.5";
 
 function readJson(key, fallback) {
   try {
@@ -174,7 +172,7 @@ function downloadTextFile(filename, content, mimeType = "text/plain") {
   URL.revokeObjectURL(url);
 }
 
-function exportChat({ format, chat, messages, appVersion = "EdenV1.1.3" }) {
+function exportChat({ format, chat, messages, appVersion = APP_VERSION }) {
   const payload = {
     app: "Project Eden",
     version: appVersion,
@@ -325,7 +323,7 @@ function AppHeader({ currentTheme, activePage, isLoggedIn, username, activeReaso
   );
 }
 
-function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage, onNavigate, onStartNewChat, onLogin, onLogout }) {
+function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage, backendOnline, onNavigate, onStartNewChat, onLogin, onLogout }) {
   const navItems = [
     { id: "chat", label: "Chat" },
     { id: "saved-chats", label: "Saved Chats" },
@@ -345,12 +343,19 @@ function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage
 
   return (
     <aside className={`hidden h-screen w-80 flex-col overflow-y-auto border-r ${currentTheme.border} ${currentTheme.card} p-5 md:flex`}>
-      <div className="mb-6 flex items-center gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 eden-page">
+      <div className="mb-4 flex items-center gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 eden-page">
         <img src={profilePic} alt="Profile" className="h-14 w-14 rounded-2xl object-cover" />
         <div>
           <p className="text-xs uppercase tracking-[0.3em] opacity-60">Project Eden</p>
           <h1 className="text-xl font-bold tracking-[0.15em]">EDEN AI</h1>
         </div>
+      </div>
+      <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-bold ${
+        backendOnline
+          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-200"
+          : "border-red-400/20 bg-red-500/10 text-red-200"
+      }`}>
+        {backendOnline ? "AI Online" : "AI Offline"}
       </div>
       <button type="button" onClick={onStartNewChat} className="mb-4 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">
         + New Chat
@@ -923,6 +928,10 @@ export default function App() {
   const [email, setEmail] = useState(localStorage.getItem("eden_email") || "No email connected");
   const [userId] = useState(createUserId);
   const [profilePic, setProfilePic] = useState(localStorage.getItem("eden_pfp") || EDEN_ASSETS.placeholders.profile);
+  const [accountId, setAccountId] = useState("");
+  const [currentPlan, setCurrentPlan] = useState("free");
+  const [subscriptionStatus, setSubscriptionStatus] = useState("active");
+  const [backendOnline, setBackendOnline] = useState(false);
 
   const [commandOpen, setCommandOpen] = useState(false);
   const [authPanelOpen, setAuthPanelOpen] = useState(false);
@@ -1113,7 +1122,10 @@ export default function App() {
     const nextEmail = user.email || localStorage.getItem("eden_email") || "No email connected";
     const nextPicture = user.avatar_url || localStorage.getItem("eden_pfp") || profilePic;
 
-    if (nextToken) setAuthToken(nextToken);
+    if (nextToken) {
+      setAuthToken(nextToken);
+      loadAccount(nextToken);
+    }
     setUsername(nextUsername);
     setEmail(nextEmail);
     setProfilePic(nextPicture);
@@ -1135,6 +1147,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    checkBackendOnline();
+
+    const timer = window.setInterval(() => {
+      checkBackendOnline();
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     const usernameParam = params.get("username");
@@ -1147,6 +1169,7 @@ export default function App() {
       localStorage.setItem("eden_token", token);
       setAuthToken(token);
       loadBackendChats(token);
+      loadAccount(token);
       playSound("login", { force: true });
       pushToast("success", "Logged in", "Authentication connected to Eden.");
     }
@@ -1174,7 +1197,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authToken) loadBackendChats(authToken);
+    if (authToken) {
+      loadBackendChats(authToken);
+      loadAccount(authToken);
+    }
   }, [authToken]);
 
   useEffect(() => {
@@ -1221,6 +1247,50 @@ export default function App() {
     return { ...extra, Authorization: `Bearer ${authToken}` };
   }
 
+  async function checkBackendOnline() {
+    if (!API_BASE) {
+      setBackendOnline(false);
+      return;
+    }
+
+    try {
+      let response = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+
+      if (!response.ok) {
+        response = await fetch(`${API_BASE}/`, { cache: "no-store" });
+      }
+
+      setBackendOnline(response.ok);
+    } catch {
+      setBackendOnline(false);
+    }
+  }
+
+  async function loadAccount(token = authToken) {
+    if (!token || !API_BASE) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/account/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json();
+      const account = data.account || {};
+      const subscription = data.subscription || {};
+
+      setAccountId(account.account_id || account.id || "");
+      setUsername(account.username || "User");
+      setEmail(account.email || "No email connected");
+      setProfilePic(account.profile_picture_url || EDEN_ASSETS.placeholders.profile);
+      setCurrentPlan(subscription.plan || "free");
+      setSubscriptionStatus(subscription.status || "active");
+    } catch (error) {
+      console.warn("Could not load backend account.", error);
+    }
+  }
+
   async function loadBackendChats(token = authToken) {
     if (!token) return;
     try {
@@ -1263,9 +1333,15 @@ export default function App() {
     localStorage.removeItem("eden_email");
     localStorage.removeItem("eden_pfp");
     localStorage.removeItem("eden_pending_2fa_token");
+
     setAuthToken("");
     setUsername("Guest");
     setEmail("No email connected");
+    setAccountId("");
+    setCurrentPlan("free");
+    setSubscriptionStatus("active");
+    setProfilePic(EDEN_ASSETS.placeholders.profile);
+
     setActivePage("chat");
     window.speechSynthesis?.cancel();
     stopThinkingSound();
@@ -1598,11 +1674,31 @@ export default function App() {
     });
   }
 
-  function handleProfilePicChange(value) {
+  async function handleProfilePicChange(value) {
     if (!value) return;
-    localStorage.setItem("eden_pfp", value);
+
     setProfilePic(value);
-    pushToast("success", "Profile updated", "Profile picture changed.");
+
+    if (!authToken || !API_BASE) {
+      pushToast("success", "Profile updated", "Profile picture changed locally.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/account/me`, {
+        method: "PATCH",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ profile_picture_url: value }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      await loadAccount(authToken);
+      pushToast("success", "Profile updated", "Profile picture saved to your account.");
+    } catch (error) {
+      console.warn("Profile picture saved locally only.", error);
+      pushToast("warning", "Profile saved locally", "Backend profile update failed.");
+    }
   }
 
   const appStyles = `
@@ -1616,15 +1712,32 @@ export default function App() {
 
   function renderPage() {
     if (activePage === "chat") return <ChatShell currentTheme={currentTheme} messages={messages} input={input} isLoggedIn={isLoggedIn} isSending={isSending} isUploading={isUploading} isListening={isListening} chatEndRef={chatEndRef} onInputChange={setInput} onSendMessage={sendMessage} onUploadFile={uploadFile} onVoiceInput={handleVoiceInput} onStartNewChat={startNewChat} />;
-    if (activePage === "saved-chats") return <SavedChatsPage chats={recentChats} chatDatabase={chatDatabase} currentTheme={currentTheme} onStartNewChat={startNewChat} onOpenChat={openChat} onRenameChat={renameChat} onDeleteChat={confirmDeleteChat} appVersion="EdenV1.1.3" />;
+    if (activePage === "saved-chats") return <SavedChatsPage chats={recentChats} chatDatabase={chatDatabase} currentTheme={currentTheme} onStartNewChat={startNewChat} onOpenChat={openChat} onRenameChat={renameChat} onDeleteChat={confirmDeleteChat} appVersion={APP_VERSION} />;
     if (activePage === "customize") return <CustomizePage currentTheme={currentTheme} themePreset={themePreset} themePresets={THEME_PRESETS} onThemeChange={changeTheme} />;
     if (activePage === "settings") return <SettingsPage currentTheme={currentTheme} voiceEnabled={voiceEnabled} autoReadResponses={autoReadResponses} reasoningLevel={reasoningLevel} memoryDepth={memoryDepth} soundEnabled={soundEnabled} startupSoundEnabled={startupSoundEnabled} thinkingSoundEnabled={thinkingSoundEnabled} soundVolume={soundVolume} audioUnlocked={audioUnlocked} useFallbackSounds={useFallbackSounds} reasoningLevels={REASONING_LEVELS} memoryDepths={MEMORY_DEPTHS} sounds={EDEN_SOUNDS} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onReasoningLevelChange={setReasoningLevel} onMemoryDepthChange={setMemoryDepth} onSoundEnabledChange={setSoundEnabled} onStartupSoundEnabledChange={setStartupSoundEnabled} onThinkingSoundEnabledChange={setThinkingSoundEnabled} onSoundVolumeChange={setSoundVolume} onFallbackSoundsChange={setUseFallbackSounds} onUnlockAudio={unlockAudio} onPlaySound={playSound} />;
-    if (activePage === "account") return <AccountOverview currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} email={email} userId={userId} profilePic={profilePic} recentChats={recentChats} uploadedFiles={uploadedFiles} onProfilePicChange={handleProfilePicChange} onLogin={loginWithGoogle} onLogout={confirmLogout} onOpen2FA={() => openAuthPanel("2fa-manage")} />;
+    if (activePage === "account") return <AccountOverview currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} email={email} userId={accountId || userId} profilePic={profilePic} recentChats={recentChats} uploadedFiles={uploadedFiles} onProfilePicChange={handleProfilePicChange} onLogin={loginWithGoogle} onLogout={confirmLogout} onOpen2FA={() => openAuthPanel("2fa-manage")} />;
     if (activePage === "legal") return <LegalPage currentTheme={currentTheme} />;
-    if (activePage === "versions") return <VersionHistory currentTheme={currentTheme} versions={VERSION_HISTORY} currentVersion="v1.1.3" />;
+    if (activePage === "versions") return <VersionHistory currentTheme={currentTheme} versions={VERSION_HISTORY} currentVersion={APP_VERSION} />;
     if (activePage === "call") return <CallPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} voiceEnabled={voiceEnabled} isListening={isListening} autoReadResponses={autoReadResponses} onVoiceInput={handleVoiceInput} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onLogin={loginWithGoogle} />;
     if (activePage === "uploads") return <UploadsPage currentTheme={currentTheme} uploadedFiles={uploadedFiles} isLoggedIn={isLoggedIn} isUploading={isUploading} onUploadFile={uploadFile} onClearUploads={clearUploads} onLogin={loginWithGoogle} />;
-    if (activePage === "subscriptions") return <SubscriptionsPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} onLogin={loginWithGoogle} />;
+    if (activePage === "subscriptions") return (
+      <SubscriptionsPage
+        currentTheme={currentTheme}
+        isLoggedIn={isLoggedIn}
+        username={username}
+        accountId={accountId || userId}
+        currentPlan={currentPlan}
+        subscriptionStatus={subscriptionStatus}
+        backendOnline={backendOnline}
+        authToken={authToken}
+        getAuthHeaders={getAuthHeaders}
+        onPlanChanged={(plan, status) => {
+          setCurrentPlan(plan || "free");
+          setSubscriptionStatus(status || "active");
+        }}
+        onLogin={loginWithGoogle}
+      />
+    );
     return null;
   }
 
@@ -1659,7 +1772,7 @@ export default function App() {
       ) : null}
       <MobileNav currentTheme={currentTheme} profilePic={profilePic} isLoggedIn={isLoggedIn} recentChats={recentChats} activePage={activePage} username={username} onNavigate={setActivePage} onStartNewChat={startNewChat} onLogin={loginWithGoogle} onLogout={confirmLogout} />
       <div className="flex h-screen overflow-hidden pt-[72px] md:pt-0">
-        <Sidebar currentTheme={currentTheme} profilePic={profilePic} isLoggedIn={isLoggedIn} recentChats={recentChats} activePage={activePage} onNavigate={setActivePage} onStartNewChat={startNewChat} onLogin={loginWithGoogle} onLogout={confirmLogout} />
+        <Sidebar currentTheme={currentTheme} profilePic={profilePic} isLoggedIn={isLoggedIn} recentChats={recentChats} activePage={activePage} backendOnline={backendOnline} onNavigate={setActivePage} onStartNewChat={startNewChat} onLogin={loginWithGoogle} onLogout={confirmLogout} />
         <section className="flex flex-1 flex-col overflow-hidden p-5">
           <AppHeader currentTheme={currentTheme} activePage={activePage} isLoggedIn={isLoggedIn} username={username} activeReasoning={activeReasoning} activeMemory={activeMemory} onOpenSettings={() => setActivePage("settings")} onOpenAccount={() => setActivePage("account")} onOpenCommand={() => setCommandOpen(true)} />
           {renderPage()}

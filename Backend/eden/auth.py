@@ -775,3 +775,53 @@ def refresh_backup_codes(
         "backup_codes": backup_codes,
         "message": "Save these backup codes now. Older backup codes were invalidated.",
     }
+
+import os
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
+
+auth_bearer = HTTPBearer(auto_error=False)
+
+JWT_SECRET = (
+    os.getenv("JWT_SECRET")
+    or os.getenv("SECRET_KEY")
+    or os.getenv("EDEN_JWT_SECRET")
+)
+
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(auth_bearer),
+):
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Missing auth token.")
+
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="JWT_SECRET is not configured.")
+
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired auth token.")
+
+    user_id = (
+        payload.get("sub")
+        or payload.get("id")
+        or payload.get("user_id")
+        or payload.get("email")
+    )
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid auth token payload.")
+
+    return {
+        "id": str(user_id),
+        "sub": str(user_id),
+        "email": payload.get("email", ""),
+        "username": payload.get("username") or payload.get("name") or "User",
+        "avatar_url": payload.get("avatar_url") or payload.get("picture") or "",
+    }

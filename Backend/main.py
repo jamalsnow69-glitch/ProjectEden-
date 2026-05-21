@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from eden.account_routes import router as account_router, init_account_tables
 from eden.auth import decode_access_token, router as auth_router
 from eden.chats import (
     ensure_chat_for_user,
@@ -244,6 +245,12 @@ app = FastAPI(
     lifespan=lifespan,
     debug=config.DEBUG,
 )
+
+@app.on_event("startup")
+def startup_account_tables():
+    init_account_tables()
+
+app.include_router(account_router)
 
 app.add_middleware(
     SessionMiddleware,

@@ -52,19 +52,20 @@ const THEME_PRESETS = [
 ];
 
 const VERSION_HISTORY = [
-  "v1.1.3 - Subscriptions page with plan cards, FAQ, billing notice, and manage/cancel controls",
-  "v1.1.2 - AuthPanel wired into App.jsx with login, signup, OAuth, and 2FA modal",
-  "v1.1.1 - Fixed EDEN_ASSETS syntax and stabilized MP3-first audio",
+  "v1.1.4 - Hotfixes: Fixed AI not Responding, instead replying with (Streaming Error 404 ...), fixed Bug where you cannot login with Discord Oauth. ",
+  "v1.1.3 - Added Subscriptions page with plan cards, FAQ, billing notice, and manage/cancel controls",
+  "v1.1.2 - Added AuthPanel wired into the App with login, signup, OAuth, and 2FA modal (not done)",
+  "v1.1.1 - Fixed EDEN_ASSETS syntax in Console, and stabilized MP3-first audio",
   "v1.1.0 - MP3-first sound system with fallback tones disabled by default",
-  "v1.0.8 - Single-file App.jsx build fix",
-  "v1.0.7 - Component wiring, command palette, toasts, uploads page, and sound settings",
-  "v1.0.6 - Saved chats wiring, empty chat state, reasoning and memory controls",
-  "v1.0.5 - Startup loading page and animations",
-  "v1.0.4 - Voice systems, saved chats, user IDs, and customization rebuild",
-  "v1.0.3 - Streaming chat improvements",
-  "v1.0.2 - Upload system foundation",
-  "v1.0.1 - Saved chats system",
-  "v1.0.0 - Project Eden React migration",
+  "v1.0.8 - Hotfixes: Fixed App not Showing up after Loading, Fixed Lag causing ai to take 10 minutes to function",
+  "v1.0.7 - Dev Info Fixes: Component wiring, command palette, toasts, uploads page, and sound settings",
+  "v1.0.6 - Dev Info Fixes: Saved chats wiring, empty chat state, reasoning and memory controls",
+  "v1.0.5 -  Added Startup loading page and animations",
+  "v1.0.4 - Added Voice systems, saved chats, user IDs, and customization rebuild",
+  "v1.0.3 - Improvements: Streaming chat improvements",
+  "v1.0.2 - Added Upload system foundation",
+  "v1.0.1 - Added Saved chats system",
+  "v1.0.0 - Added Project Eden React migration",
 ];
 
 const REASONING_LEVELS = [

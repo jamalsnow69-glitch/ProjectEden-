@@ -35,7 +35,7 @@ const PLANS = [
     ],
     cta: "COMING SOON",
     ctaDisabled: false,
-    highlight: false,
+    highlight: true,
   },
   {
     id: "plus",
@@ -52,7 +52,7 @@ const PLANS = [
       "Dedicated support",
     ],
     cta: "COMING SOON",
-    ctaDisabled: false,
+    ctaDisabled: true,
     highlight: false,
   },
   {
@@ -70,7 +70,7 @@ const PLANS = [
       "Dedicated support",
     ],
     cta: "Upgrade to Pro",
-    ctaDisabled: false,
+    ctaDisabled: true,
     highlight: false,
   },
   {
@@ -88,7 +88,7 @@ const PLANS = [
       "Dedicated support",
     ],
     cta: "Upgrade to Premium",
-    ctaDisabled: false,
+    ctaDisabled: true,
     highlight: false,
   },
   {
@@ -108,7 +108,7 @@ const PLANS = [
       "Family Admin Has 12 Tools For Management",
     ],
     cta: "Start Eden Family Plan",
-    ctaDisabled: false,
+    ctaDisabled: true,
     highlight: false,
   },
     {
@@ -128,7 +128,7 @@ const PLANS = [
       "Enterprise Admin Has 22 Tools For Management",
     ],
     cta: "Inquire About Enterprise!",
-    ctaDisabled: false,
+    ctaDisabled: true,
     highlight: false,
   }
 ];

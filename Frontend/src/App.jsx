@@ -1285,6 +1285,33 @@ if (isCaptchaPage) {
     return { ...extra, Authorization: `Bearer ${authToken}` };
   }
 
+  useEffect(() => {
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const user = session?.user;
+
+    if (!user) {
+      return;
+    }
+
+    try {
+      const profile = await getOrCreateProfile(user);
+
+      setAccountId(profile.account_id);
+      setUsername(profile.username || "User");
+      setEmail(profile.email || "No email connected");
+      setProfilePic(profile.avatar_url || EDEN_ASSETS.placeholders.profile);
+      setCurrentPlan(profile.plan || "free");
+      setSubscriptionStatus(profile.subscription_status || "active");
+    } catch (error) {
+      console.warn("Supabase profile sync failed.", error);
+    }
+  });
+
+  return () => subscription.unsubscribe();
+}, []);
+
   async function checkBackendOnline() {
     if (!API_BASE) {
       setBackendOnline(false);
@@ -1361,11 +1388,22 @@ if (isCaptchaPage) {
     pushToast("success", "Theme changed", `Theme switched to ${themeId}.`);
   }
 
-  function loginWithGoogle() {
-    openAuthPanel("login");
+  async function loginWithGoogle() {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+
+  if (error) {
+    pushToast("error", "Login failed", error.message);
   }
+}
 
   function logout() {
+    supabase.auth.signOut();
+    
     localStorage.removeItem("eden_token");
     localStorage.removeItem("eden_user");
     localStorage.removeItem("eden_email");

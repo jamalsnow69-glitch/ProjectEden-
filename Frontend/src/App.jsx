@@ -3,6 +3,8 @@ import AuthPanel from "./components/AuthPanel";
 import SubscriptionsPage from "./components/Subscriptions";
 import CaptchaPage from "./pages/CaptchaPage";
 import { shouldShowCaptcha, makeCaptchaPath } from "./utils/captcha";
+import { supabase } from "./utils/supabase";
+import { getOrCreateProfile } from "./utils/profile";
 
 
 const EDEN_ASSETS = {

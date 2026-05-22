@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AuthPanel from "./components/AuthPanel";
 import SubscriptionsPage from "./components/Subscriptions";
+import CaptchaPage from "./pages/CaptchaPage";
 import { shouldShowCaptcha, makeCaptchaPath } from "./utils/captcha";
+
 
 const EDEN_ASSETS = {
   logos: {
@@ -954,6 +956,12 @@ export default function App() {
   const activeReasoning = REASONING_LEVELS.find((item) => item.id === reasoningLevel) || REASONING_LEVELS[1];
   const activeMemory = MEMORY_DEPTHS.find((item) => item.id === memoryDepth) || MEMORY_DEPTHS[1];
 
+  const isCaptchaPage = window.location.pathname.includes("/anti-bot/captcha");
+
+if (isCaptchaPage) {
+  return <CaptchaPage />;
+}
+
   useEffect(() => {
   const isCaptchaPage = window.location.pathname.includes("/anti-bot/captcha");
 
@@ -961,7 +969,7 @@ export default function App() {
     window.location.href = makeCaptchaPath();
   }
  }, []);
-
+  
   function pushToast(type, title, message) {
     const toast = makeToast(type, title, message);
     setToasts((current) => [toast, ...current].slice(0, 5));

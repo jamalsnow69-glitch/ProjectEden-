@@ -21,7 +21,7 @@ const PLANS = [
   {
     id: "go",
     name: "Eden Go",
-    price: "$2.99",
+    price: "$4.99",
     period: "/ month",
     badge: "A Small Upgrade",
     description: "Eden Go.",
@@ -42,7 +42,7 @@ const PLANS = [
     name: "Eden plus",
     price: "$9.99",
     period: "/ month",
-    badge: "Popular",
+    badge: "COMING SOON",
     description: "Cool Eden — Tons of limits.",
     features: [
       "1250 messages / day",
@@ -58,7 +58,7 @@ const PLANS = [
   {
     id: "pro",
     name: "Eden Pro",
-    price: "$19.99",
+    price: "$17.99",
     period: "/ month",
     badge: "COMING SOON",
     description: "Nonchalant Eden — Some limits.",
@@ -76,7 +76,7 @@ const PLANS = [
   {
     id: "premium",
     name: "Eden Premium",
-    price: "$29.99",
+    price: "$24.99",
     period: "/ month",
     badge: "COMING SOON",
     description: "Maximum Eden — no limits.",
@@ -94,7 +94,7 @@ const PLANS = [
   {
     id: "family",
     name: "Eden Family",
-    price: "$49.99",
+    price: "$39.99",
     period: "/ month",
     badge: "COMING SOON",
     description: "Maximum Eden — no limits.",
@@ -102,15 +102,35 @@ const PLANS = [
       "Infinite messages / day",
       "Max reasoning",
       "Full memory depth",
-      " 25 File uploads (750 MB)",
+      " 35 File uploads (805 MB)",
       "Dedicated support",
-      "12 User Slots (All Users Linked Share Usage)",
-      "Family Admin Has 24 Tools For Management",
+      "8 User Slots",
+      "Family Admin Has 12 Tools For Management",
     ],
     cta: "Start Eden Family Plan",
     ctaDisabled: false,
     highlight: false,
   },
+    {
+    id: "enterprise",
+    name: "Enterprise",
+    price: "$ (May Vary)",
+    period: "/ month (May Vary)",
+    badge: "COMING SOON",
+    description: "Maximum Eden — no limits.",
+    features: [
+      "Infinite messages / day",
+      "Max reasoning",
+      "Full memory depth",
+      " Fill Uploads May Vary",
+      "Dedicated support",
+      "(May Vary) User Slots",
+      "Enterprise Admin Has 22 Tools For Management",
+    ],
+    cta: "Inquire About Enterprise!",
+    ctaDisabled: false,
+    highlight: false,
+  }
 ];
 
 const FAQS = [

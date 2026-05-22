@@ -6,6 +6,14 @@ import { shouldShowCaptcha, makeCaptchaPath } from "./utils/captcha";
 import { supabase } from "./utils/supabase";
 import { getOrCreateProfile } from "./utils/profile";
 
+import {
+  loadChats as loadSupabaseChats,
+  createChat as createSupabaseChat,
+  renameChat as renameSupabaseChat,
+  deleteChat as deleteSupabaseChat,
+  loadMessages as loadSupabaseMessages,
+  saveMessage as saveSupabaseMessage,
+} from "./utils/supabaseChats";
 
 const EDEN_ASSETS = {
   logos: {
@@ -1356,30 +1364,33 @@ if (isCaptchaPage) {
     }
   }
 
-  async function loadBackendChats(token = authToken) {
-    if (!token) return;
-    try {
-      const response = await fetch(`${API_BASE}/chats`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!response.ok) return;
-      const data = await response.json();
-      setRecentChats(data.chats || []);
-    } catch {
-      console.warn("Backend chats unavailable. Using local cache.");
-    }
+  async function loadBackendChats() {
+  try {
+    const chats = await loadSupabaseChats();
+
+    setRecentChats(
+      chats.map((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        createdAt: new Date(chat.created_at).getTime(),
+        updatedAt: new Date(chat.updated_at).getTime(),
+      }))
+    );
+  } catch (error) {
+    console.warn("Supabase chats unavailable. Using local cache.", error);
   }
+}
 
   async function saveBackendMessage(chatId, message) {
-    if (!authToken || !chatId || !message?.text) return;
-    try {
-      await fetch(`${API_BASE}/chats/${chatId}/messages`, {
-        method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(message),
-      });
-    } catch {
-      console.warn("Message saved locally only.");
-    }
+  if (!chatId || !message?.text) return;
+
+  try {
+    const role = message.sender === "eden" ? "assistant" : "user";
+    await saveSupabaseMessage(chatId, role, message.text);
+  } catch (error) {
+    console.warn("Message saved locally only.", error);
   }
+}
 
   function changeTheme(themeId) {
     localStorage.setItem("eden_theme", themeId);
@@ -1471,15 +1482,31 @@ if (isCaptchaPage) {
     }
   }
 
-  function startNewChat() {
-    if (!isLoggedIn) {
-      setActivePage("chat");
-      setMessages([{ sender: "eden", text: "Please log in before creating saved chats." }]);
-      playSound("warning", { force: true });
-      pushToast("warning", "Login required", "Log in before creating saved chats.");
-      openAuthPanel("login");
-      return;
-    }
+  async function startNewChat() {
+  if (!isLoggedIn) {
+    openAuthPanel("login");
+    return;
+  }
+
+  try {
+    const chat = await createSupabaseChat("New Chat");
+
+    const mappedChat = {
+      id: chat.id,
+      title: chat.title || "New Chat",
+      createdAt: new Date(chat.created_at).getTime(),
+      updatedAt: new Date(chat.updated_at).getTime(),
+    };
+
+    setRecentChats((current) => [mappedChat, ...current]);
+    setSessionId(chat.id);
+    setMessages([]);
+    setActivePage("chat");
+    playSound("openChat", { force: true });
+  } catch (error) {
+    pushToast("error", "New chat failed", error.message);
+  }
+}
     const starterMessages = [{ sender: "eden", text: "New chat initialized." }];
     createBackendChat(`New Chat ${recentChats.length + 1}`, starterMessages).then((newId) => {
       setSessionId(newId);

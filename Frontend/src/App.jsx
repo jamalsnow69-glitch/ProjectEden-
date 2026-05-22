@@ -1517,65 +1517,79 @@ if (isCaptchaPage) {
     });
   }
 
-  async function openChat(chat) {
+ async function openRecentChat(chat) {
+  try {
+    const savedMessages = await loadSupabaseMessages(chat.id);
+
     setSessionId(chat.id);
+    setMessages(savedMessages);
     setActivePage("chat");
     playSound("openChat", { force: true });
-    try {
-      const response = await fetch(`${API_BASE}/chats/${chat.id}/messages`, { headers: getAuthHeaders() });
-      if (response.ok) {
-        const data = await response.json();
-        const backendMessages = data.messages || [];
-        if (backendMessages.length) {
-          setMessages(backendMessages);
-          setChatDatabase((current) => ({ ...current, [chat.id]: backendMessages }));
-          return;
-        }
-      }
-    } catch {
-      console.warn("Could not open backend chat. Using local cache.");
-    }
-    const savedMessages = chatDatabase[chat.id];
-    setMessages(savedMessages?.length ? savedMessages : []);
+  } catch (error) {
+    pushToast("error", "Could not open chat", error.message);
   }
+}
 
   async function renameChat(chatId) {
-    const current = recentChats.find((chat) => chat.id === chatId);
-    const cleanName = window.prompt("Rename chat:", current?.title || "New Chat")?.trim();
-    if (!cleanName) return;
-    setRecentChats((currentChats) => currentChats.map((chat) => (chat.id === chatId ? { ...chat, title: cleanName, updatedAt: Date.now() } : chat)));
-    playSound("renameChat", { force: true });
-    pushToast("success", "Chat renamed", `Renamed to ${cleanName}.`);
-    try {
-      await fetch(`${API_BASE}/chats/${chatId}`, {
-        method: "PATCH",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ title: cleanName }),
-      });
-    } catch {
-      console.warn("Backend rename failed. Local rename saved.");
-    }
-  }
+  const chat = recentChats.find((item) => item.id === chatId);
+  const nextTitle = window.prompt("Rename chat:", chat?.title || "New Chat");
 
-  async function deleteChat(chatId) {
-    setRecentChats((current) => current.filter((chat) => chat.id !== chatId));
-    setChatDatabase((current) => {
-      const updated = { ...current };
-      delete updated[chatId];
-      return updated;
-    });
-    try {
-      await fetch(`${API_BASE}/chats/${chatId}`, { method: "DELETE", headers: getAuthHeaders() });
-    } catch {
-      console.warn("Backend delete failed. Local delete saved.");
-    }
-    if (sessionId === chatId) {
-      setSessionId("");
-      setMessages([]);
-    }
-    playSound("deleteChat", { force: true });
-    pushToast("info", "Chat deleted", "The saved chat was deleted locally.");
+  if (!nextTitle || !nextTitle.trim()) return;
+
+  try {
+    const updated = await renameSupabaseChat(chatId, nextTitle.trim());
+
+    setRecentChats((current) =>
+      current.map((item) =>
+        item.id === chatId
+          ? {
+              ...item,
+              title: updated.title,
+              updatedAt: new Date(updated.updated_at).getTime(),
+            }
+          : item
+      )
+    );
+
+    playSound("renameChat", { force: true });
+    pushToast("success", "Chat renamed", "Saved to Supabase.");
+  } catch (error) {
+    pushToast("error", "Rename failed", error.message);
   }
+}
+
+  function deleteChat(chatId) {
+  openConfirm({
+    title: "Delete chat?",
+    description: "This will delete the saved chat and its messages from Supabase.",
+    confirmLabel: "Delete",
+    danger: true,
+    onConfirm: async () => {
+      try {
+        await deleteSupabaseChat(chatId);
+
+        setRecentChats((current) => current.filter((chat) => chat.id !== chatId));
+        setChatDatabase((current) => {
+          const copy = { ...current };
+          delete copy[chatId];
+          return copy;
+        });
+
+        if (sessionId === chatId) {
+          setSessionId("");
+          setMessages([]);
+        }
+
+        closeConfirm();
+        playSound("deleteChat", { force: true });
+        pushToast("success", "Chat deleted", "Removed from Supabase.");
+      } catch (error) {
+        closeConfirm();
+        pushToast("error", "Delete failed", error.message);
+      }
+    },
+  });
+}
 
   function confirmDeleteChat(chatId) {
     const chat = recentChats.find((item) => item.id === chatId);

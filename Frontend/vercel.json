@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/:path*/anti-bot/captcha",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

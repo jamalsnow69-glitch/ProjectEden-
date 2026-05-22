@@ -9,3 +9,7 @@ export function makeCaptchaPath() {
   const token = Math.random().toString(36).slice(2, 12);
   return `/${token}/anti-bot/captcha`;
 }
+
+export function markCaptchaPassed() {
+  sessionStorage.setItem("eden_captcha_passed", "true");
+}

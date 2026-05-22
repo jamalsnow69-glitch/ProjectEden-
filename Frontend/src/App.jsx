@@ -5,7 +5,6 @@ import CaptchaPage from "./pages/CaptchaPage";
 import { shouldShowCaptcha, makeCaptchaPath } from "./utils/captcha";
 import { supabase } from "./utils/supabase";
 import { getOrCreateProfile } from "./utils/profile";
-
 import {
   loadChats as loadSupabaseChats,
   createChat as createSupabaseChat,
@@ -65,6 +64,9 @@ const THEME_PRESETS = [
 ];
 
 const VERSION_HISTORY = [
+  "v1.1.8 - Rebuilt App.jsx to fix Supabase auth sync, account ID fallbacks, chat persistence, captcha routing, and backend request safety",
+  "v1.1.7 - Added stable account ID fallback system with EDN-No User logout state and Supabase profile ID sync",
+  "v1.1.6 - Stabilized Supabase auth, Supabase saved chats, captcha routing, and fixed hook/order deployment issues",
   "v1.1.5 - Added backend account ID loading, sidebar AI online status, subscription wiring, and logout profile reset",
   "v1.1.4 - Hotfixes: Fixed AI not Responding, instead replying with (Streaming Error 404 ...), fixed Bug where you cannot login with Discord Oauth. ",
   "v1.1.3 - Added Subscriptions page with plan cards, FAQ, billing notice, and manage/cancel controls",
@@ -96,10 +98,6 @@ const MEMORY_DEPTHS = [
   { id: "full", name: "Full", description: "Maximum available memory depth." },
 ];
 
-const EDEN_SOUNDS = EDEN_ASSETS.sounds;
-const STARTUP_LOADING_MS = 4200;
-
-
 const FALLBACK_TONES = {
   startup: [196, 294, 392],
   message: [784],
@@ -123,8 +121,11 @@ const FALLBACK_TONES = {
   panelClose: [550, 440, 330],
 };
 
+const EDEN_SOUNDS = EDEN_ASSETS.sounds;
+const STARTUP_LOADING_MS = 4200;
 const API_BASE = import.meta.env.VITE_API_BASE || "";
-const APP_VERSION = "EdenV1.1.5";
+const APP_VERSION = "EdenV1.1.8";
+const NO_USER_ID = "EDN-No User";
 
 function readJson(key, fallback) {
   try {
@@ -140,14 +141,6 @@ function writeJson(key, value) {
   } catch {}
 }
 
-function createUserId() {
-  const existing = localStorage.getItem("eden_user_id");
-  if (existing) return existing;
-  const next = `EDN-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
-  localStorage.setItem("eden_user_id", next);
-  return next;
-}
-
 function clampVolume(value) {
   const clean = Number(value);
   if (Number.isNaN(clean)) return 0.45;
@@ -161,6 +154,41 @@ function makeToast(type, title, message) {
     title,
     message,
   };
+}
+
+function makeFallbackId() {
+  return Math.random().toString(36).slice(2, 12).toUpperCase();
+}
+
+function makeFrontendAccountId() {
+  const randomPart = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase() : makeFallbackId();
+  return `EDN-${randomPart}`;
+}
+
+function createUserId() {
+  const existing = localStorage.getItem("eden_user_id");
+  if (existing) return existing;
+  const next = makeFrontendAccountId();
+  localStorage.setItem("eden_user_id", next);
+  return next;
+}
+
+async function ensureProfileAccountId(user, profile) {
+  if (!user || !profile) return NO_USER_ID;
+  if (profile.account_id) return profile.account_id;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const nextAccountId = makeFrontendAccountId();
+    const { data, error } = await supabase.from("profiles").update({ account_id: nextAccountId }).eq("id", user.id).select("account_id").single();
+
+    if (!error && data?.account_id) return data.account_id;
+
+    const message = String(error?.message || "").toLowerCase();
+    const code = String(error?.code || "");
+    if (!message.includes("duplicate") && code !== "23505") break;
+  }
+
+  return NO_USER_ID;
 }
 
 function safeFileName(value, fallback = "eden-chat") {
@@ -234,15 +262,7 @@ function exportChat({ format, chat, messages, appVersion = APP_VERSION }) {
     return;
   }
 
-  const lines = [
-    payload.chat.title,
-    "Project Eden Chat Export",
-    `Version: ${payload.version}`,
-    `Chat ID: ${payload.chat.id}`,
-    `Exported: ${payload.exportedAt}`,
-    "================================================",
-    "",
-  ];
+  const lines = [payload.chat.title, "Project Eden Chat Export", `Version: ${payload.version}`, `Chat ID: ${payload.chat.id}`, `Exported: ${payload.exportedAt}`, "================================================", ""];
 
   payload.messages.forEach((message) => {
     lines.push(`${message.sender === "eden" || message.sender === "assistant" ? "Eden" : "User"}:`);
@@ -288,9 +308,7 @@ function ConfirmModal({ open, title, description, confirmLabel, danger, currentT
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 p-5 backdrop-blur-sm">
       <div className={`eden-page w-full max-w-md rounded-3xl border ${currentTheme.border} ${currentTheme.card} p-6 shadow-2xl`}>
-        <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border ${danger ? "border-red-400/30 bg-red-400/10 text-red-300" : "border-white/10 bg-white/5"}`}>
-          {danger ? "!" : "?"}
-        </div>
+        <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border ${danger ? "border-red-400/30 bg-red-400/10 text-red-300" : "border-white/10 bg-white/5"}`}>{danger ? "!" : "?"}</div>
         <div className="mt-5 text-center">
           <h2 className="text-xl font-bold tracking-[0.08em]">{title}</h2>
           <p className="mt-3 text-sm leading-relaxed opacity-70">{description}</p>
@@ -321,15 +339,9 @@ function AppHeader({ currentTheme, activePage, isLoggedIn, username, activeReaso
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={onOpenCommand} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">
-            Command
-          </button>
-          <button type="button" onClick={onOpenSettings} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">
-            Settings
-          </button>
-          <button type="button" onClick={onOpenAccount} className="rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">
-            Account
-          </button>
+          <button type="button" onClick={onOpenCommand} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Command</button>
+          <button type="button" onClick={onOpenSettings} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Settings</button>
+          <button type="button" onClick={onOpenAccount} className="rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">Account</button>
         </div>
       </div>
     </header>
@@ -363,40 +375,24 @@ function Sidebar({ currentTheme, profilePic, isLoggedIn, recentChats, activePage
           <h1 className="text-xl font-bold tracking-[0.15em]">EDEN AI</h1>
         </div>
       </div>
-      <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-bold ${
-        backendOnline
-          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-200"
-          : "border-red-400/20 bg-red-500/10 text-red-200"
-      }`}>
-        {backendOnline ? "AI Online" : "AI Offline"}
-      </div>
-      <button type="button" onClick={onStartNewChat} className="mb-4 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">
-        + New Chat
-      </button>
+      <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-bold ${backendOnline ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-200" : "border-red-400/20 bg-red-500/10 text-red-200"}`}>{backendOnline ? "AI Online" : "AI Offline"}</div>
+      <button type="button" onClick={onStartNewChat} className="mb-4 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">+ New Chat</button>
       <div className="space-y-2">
         {navItems.map((item) => (
-          <button key={item.id} type="button" onClick={() => onNavigate(item.id)} className={buttonClass(item.id)}>
-            {item.label}
-          </button>
+          <button key={item.id} type="button" onClick={() => onNavigate(item.id)} className={buttonClass(item.id)}>{item.label}</button>
         ))}
       </div>
       <div className="mt-6 shrink-0 rounded-2xl border border-white/10 bg-black/20 p-4">
         <p className="text-xs uppercase tracking-[0.25em] opacity-50">Saved Chats</p>
         <p className="mt-2 text-2xl font-bold">{recentChats.length}</p>
         <p className="mt-1 text-sm opacity-60">Manage conversations on the Saved Chats page.</p>
-        <button type="button" onClick={() => onNavigate("saved-chats")} className="mt-4 w-full rounded-2xl border border-white/10 px-4 py-3 text-sm font-bold">
-          View Saved Chats
-        </button>
+        <button type="button" onClick={() => onNavigate("saved-chats")} className="mt-4 w-full rounded-2xl border border-white/10 px-4 py-3 text-sm font-bold">View Saved Chats</button>
       </div>
       <div className="mt-5 shrink-0 border-t border-white/10 pb-6 pt-5">
         {isLoggedIn ? (
-          <button type="button" onClick={onLogout} className="w-full rounded-2xl border border-red-400/20 bg-black/30 px-4 py-3 text-sm font-bold text-red-300">
-            Logout
-          </button>
+          <button type="button" onClick={onLogout} className="w-full rounded-2xl border border-red-400/20 bg-black/30 px-4 py-3 text-sm font-bold text-red-300">Logout</button>
         ) : (
-          <button type="button" onClick={onLogin} className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">
-            Login / Sign Up
-          </button>
+          <button type="button" onClick={onLogin} className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">Login / Sign Up</button>
         )}
       </div>
     </aside>
@@ -416,9 +412,7 @@ function MobileNav({ currentTheme, profilePic, isLoggedIn, recentChats, activePa
     <div className="md:hidden">
       <div className={`fixed left-0 right-0 top-0 z-40 border-b ${currentTheme.border} ${currentTheme.card} px-4 py-3`}>
         <div className="flex items-center justify-between gap-3">
-          <button type="button" onClick={() => setOpen(true)} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">
-            Menu
-          </button>
+          <button type="button" onClick={() => setOpen(true)} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Menu</button>
           <div className="min-w-0 flex-1 text-center">
             <p className="truncate text-sm font-bold tracking-[0.2em]">EDEN AI</p>
             <p className="truncate text-xs opacity-60">{isLoggedIn ? username : "Not logged in"}</p>
@@ -431,18 +425,12 @@ function MobileNav({ currentTheme, profilePic, isLoggedIn, recentChats, activePa
           <div className={`h-full w-[86%] max-w-sm overflow-y-auto border-r ${currentTheme.border} ${currentTheme.card} p-5 shadow-2xl`}>
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-bold tracking-[0.12em]">EDEN AI</h2>
-              <button type="button" onClick={() => setOpen(false)} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">
-                Close
-              </button>
+              <button type="button" onClick={() => setOpen(false)} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Close</button>
             </div>
-            <button type="button" onClick={() => { onStartNewChat(); setOpen(false); }} className="mt-6 w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">
-              + New Chat
-            </button>
+            <button type="button" onClick={() => { onStartNewChat(); setOpen(false); }} className="mt-6 w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">+ New Chat</button>
             <div className="mt-5 space-y-2">
               {navItems.map((id) => (
-                <button key={id} type="button" onClick={() => go(id)} className={`w-full rounded-2xl border px-4 py-3 text-left text-sm font-bold ${activePage === id ? "border-white bg-white text-black" : "border-white/10 bg-black/40"}`}>
-                  {id.replace(/-/g, " ")}
-                </button>
+                <button key={id} type="button" onClick={() => go(id)} className={`w-full rounded-2xl border px-4 py-3 text-left text-sm font-bold ${activePage === id ? "border-white bg-white text-black" : "border-white/10 bg-black/40"}`}>{id.replace(/-/g, " ")}</button>
               ))}
             </div>
             <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -451,13 +439,9 @@ function MobileNav({ currentTheme, profilePic, isLoggedIn, recentChats, activePa
             </div>
             <div className="mt-5 border-t border-white/10 pb-8 pt-5">
               {isLoggedIn ? (
-                <button type="button" onClick={() => { onLogout(); setOpen(false); }} className="w-full rounded-2xl border border-red-400/20 bg-black/30 px-4 py-3 text-sm font-bold text-red-300">
-                  Logout
-                </button>
+                <button type="button" onClick={() => { onLogout(); setOpen(false); }} className="w-full rounded-2xl border border-red-400/20 bg-black/30 px-4 py-3 text-sm font-bold text-red-300">Logout</button>
               ) : (
-                <button type="button" onClick={() => { onLogin(); setOpen(false); }} className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">
-                  Login / Sign Up
-                </button>
+                <button type="button" onClick={() => { onLogin(); setOpen(false); }} className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">Login / Sign Up</button>
               )}
             </div>
           </div>
@@ -477,9 +461,7 @@ function ChatShell({ currentTheme, messages, input, isLoggedIn, isSending, isUpl
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-2xl">*</div>
               <h2 className="mt-5 text-xl font-bold tracking-[0.08em]">No messages in this chat.</h2>
               <p className="mt-3 text-sm leading-relaxed opacity-70">Send a message, start a new chat, or open a saved conversation.</p>
-              <button type="button" onClick={onStartNewChat} className="mt-6 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">
-                Start New Chat
-              </button>
+              <button type="button" onClick={onStartNewChat} className="mt-6 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">Start New Chat</button>
             </div>
           </div>
         ) : (
@@ -489,9 +471,7 @@ function ChatShell({ currentTheme, messages, input, isLoggedIn, isSending, isUpl
               const text = message.text || message.content || "";
               return (
                 <div key={`${message.sender || message.role || "message"}-${index}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${isUser ? "rounded-br-sm bg-white text-black" : "rounded-bl-sm border border-white/10 bg-black/30"}`}>
-                    {text || (!isUser && isSending ? "Eden is thinking..." : "")}
-                  </div>
+                  <div className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${isUser ? "rounded-br-sm bg-white text-black" : "rounded-bl-sm border border-white/10 bg-black/30"}`}>{text || (!isUser && isSending ? "Eden is thinking..." : "")}</div>
                 </div>
               );
             })}
@@ -501,29 +481,11 @@ function ChatShell({ currentTheme, messages, input, isLoggedIn, isSending, isUpl
       </div>
       <div className="border-t border-white/10 p-4">
         <div className="flex gap-3">
-          <textarea
-            value={input}
-            onChange={(event) => onInputChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                onSendMessage();
-              }
-            }}
-            placeholder={isLoggedIn ? "Message Eden..." : "Log in to message Eden..."}
-            rows={1}
-            className="min-h-12 flex-1 resize-none rounded-2xl border border-white/10 bg-black/30 px-4 py-3 outline-none"
-          />
+          <textarea value={input} onChange={(event) => onInputChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSendMessage(); } }} placeholder={isLoggedIn ? "Message Eden..." : "Log in to message Eden..."} rows={1} className="min-h-12 flex-1 resize-none rounded-2xl border border-white/10 bg-black/30 px-4 py-3 outline-none" />
           <input type="file" id="eden-upload" className="hidden" onChange={onUploadFile} />
-          <label htmlFor="eden-upload" className="cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 py-3">
-            {isUploading ? "..." : "+"}
-          </label>
-          <button type="button" onClick={onVoiceInput} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3">
-            {isListening ? "Listening" : "Mic"}
-          </button>
-          <button type="button" onClick={onSendMessage} disabled={isSending} className="rounded-2xl bg-white px-6 py-3 font-bold text-black disabled:opacity-50">
-            {isSending ? "Wait" : "Send"}
-          </button>
+          <label htmlFor="eden-upload" className="cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 py-3">{isUploading ? "..." : "+"}</label>
+          <button type="button" onClick={onVoiceInput} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3">{isListening ? "Listening" : "Mic"}</button>
+          <button type="button" onClick={onSendMessage} disabled={isSending} className="rounded-2xl bg-white px-6 py-3 font-bold text-black disabled:opacity-50">{isSending ? "Wait" : "Send"}</button>
         </div>
       </div>
     </section>
@@ -539,7 +501,6 @@ function lastPreview(messages) {
 function SavedChatsPage({ chats, chatDatabase, currentTheme, onStartNewChat, onOpenChat, onRenameChat, onDeleteChat, appVersion }) {
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState("newest");
-
   const visibleChats = [...(chats || [])]
     .filter((chat) => {
       const clean = query.toLowerCase().trim();
@@ -561,9 +522,7 @@ function SavedChatsPage({ chats, chatDatabase, currentTheme, onStartNewChat, onO
           <h2 className="text-2xl font-bold tracking-[0.15em]">SAVED CHATS</h2>
           <p className="mt-2 text-sm opacity-70">Open, rename, delete, search, sort, or export saved conversations.</p>
         </div>
-        <button type="button" onClick={onStartNewChat} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">
-          + New Chat
-        </button>
+        <button type="button" onClick={onStartNewChat} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">+ New Chat</button>
       </div>
       <div className="mt-6 grid gap-3 lg:grid-cols-[1fr_auto]">
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search saved chats..." className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none" />
@@ -669,12 +628,8 @@ function SettingsPage({ currentTheme, voiceEnabled, autoReadResponses, reasoning
             <p className="mt-1 text-sm opacity-70">Unlock audio once. MP3 files are primary. Fallback tones stay off unless enabled.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={onUnlockAudio} className="rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">
-              {audioUnlocked ? "Audio Unlocked" : "Enable Sounds"}
-            </button>
-            <button type="button" onClick={() => onPlaySound("success", { force: true })} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">
-              Test Sound
-            </button>
+            <button type="button" onClick={onUnlockAudio} className="rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">{audioUnlocked ? "Audio Unlocked" : "Enable Sounds"}</button>
+            <button type="button" onClick={() => onPlaySound("success", { force: true })} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Test Sound</button>
           </div>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-4">
@@ -688,9 +643,7 @@ function SettingsPage({ currentTheme, voiceEnabled, autoReadResponses, reasoning
         </label>
         <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {Object.keys(sounds).map((name) => (
-            <button key={name} type="button" onClick={() => onPlaySound(name, { force: true })} className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-left text-xs opacity-80">
-              {name}
-            </button>
+            <button key={name} type="button" onClick={() => onPlaySound(name, { force: true })} className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-left text-xs opacity-80">{name}</button>
           ))}
         </div>
       </div>
@@ -712,15 +665,11 @@ function AccountOverview({ currentTheme, isLoggedIn, username, email, userId, pr
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-[0.15em]">ACCOUNT OVERVIEW</h2>
-          <p className="mt-2 text-sm opacity-70">Manage your Eden identity, profile image, auth methods, and local account stats.</p>
+          <p className="mt-2 text-sm opacity-70">Manage your Eden identity, profile image, auth methods, and account stats.</p>
         </div>
         <div className="flex flex-wrap gap-3">
           <button type="button" onClick={onOpen2FA} className="rounded-2xl border border-white/10 bg-black/30 px-5 py-3 text-sm font-bold">2FA Setup</button>
-          {isLoggedIn ? (
-            <button type="button" onClick={onLogout} className="rounded-2xl border border-red-400/20 bg-black/30 px-5 py-3 text-sm font-bold text-red-300">Logout</button>
-          ) : (
-            <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">Login / Sign Up</button>
-          )}
+          {isLoggedIn ? <button type="button" onClick={onLogout} className="rounded-2xl border border-red-400/20 bg-black/30 px-5 py-3 text-sm font-bold text-red-300">Logout</button> : <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">Login / Sign Up</button>}
         </div>
       </div>
       <div className="mt-6 grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
@@ -731,10 +680,7 @@ function AccountOverview({ currentTheme, isLoggedIn, username, email, userId, pr
               <h3 className="text-2xl font-bold">{isLoggedIn ? username : "Guest"}</h3>
               <p className="mt-2 opacity-70">{isLoggedIn ? email : "Not logged in"}</p>
               <p className="mt-2 text-xs uppercase tracking-[0.25em] opacity-50">User ID: {userId}</p>
-              <label className="mt-5 inline-flex cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">
-                Change Profile Picture
-                <input type="file" accept="image/*" className="hidden" onChange={handleProfile} />
-              </label>
+              <label className="mt-5 inline-flex cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Change Profile Picture<input type="file" accept="image/*" className="hidden" onChange={handleProfile} /></label>
             </div>
           </div>
         </div>
@@ -767,12 +713,7 @@ function LegalPage({ currentTheme }) {
     <section className={`eden-page flex-1 overflow-y-auto rounded-3xl border ${currentTheme.border} ${currentTheme.card} p-6`}>
       <h2 className="text-2xl font-bold tracking-[0.15em]">LEGAL</h2>
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
-        {sections.map((item) => (
-          <div key={item.title} className="rounded-3xl border border-white/10 bg-black/20 p-5">
-            <h3 className="text-lg font-bold">{item.title}</h3>
-            <p className="mt-3 text-sm leading-relaxed opacity-75">{item.text}</p>
-          </div>
-        ))}
+        {sections.map((item) => <div key={item.title} className="rounded-3xl border border-white/10 bg-black/20 p-5"><h3 className="text-lg font-bold">{item.title}</h3><p className="mt-3 text-sm leading-relaxed opacity-75">{item.text}</p></div>)}
       </div>
     </section>
   );
@@ -789,12 +730,7 @@ function VersionHistory({ currentTheme, versions, currentVersion }) {
         <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm">Current: <span className="font-bold">{currentVersion}</span></div>
       </div>
       <div className="mt-6 space-y-3">
-        {versions.map((version, index) => (
-          <div key={`${version}-${index}`} className={`eden-card rounded-3xl border p-5 ${index === 0 ? "border-white/30 bg-white text-black" : "border-white/10 bg-black/20"}`}>
-            <p className="font-bold">{version}</p>
-            {index === 0 ? <p className="mt-2 text-xs font-bold">LATEST</p> : null}
-          </div>
-        ))}
+        {versions.map((version, index) => <div key={`${version}-${index}`} className={`eden-card rounded-3xl border p-5 ${index === 0 ? "border-white/30 bg-white text-black" : "border-white/10 bg-black/20"}`}><p className="font-bold">{version}</p>{index === 0 ? <p className="mt-2 text-xs font-bold">LATEST</p> : null}</div>)}
       </div>
     </section>
   );
@@ -806,18 +742,12 @@ function CallPage({ currentTheme, isLoggedIn, voiceEnabled, isListening, autoRea
   return (
     <section className={`eden-page flex flex-1 items-center justify-center overflow-y-auto rounded-3xl border ${currentTheme.border} ${currentTheme.card} p-6`}>
       <div className="w-full max-w-3xl text-center">
-        <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-[2rem] border border-white/10 bg-black/30 shadow-2xl">
-          <div className={`h-12 w-12 rounded-full ${isListening ? "animate-pulse bg-white" : "bg-white/30"}`} />
-        </div>
+        <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-[2rem] border border-white/10 bg-black/30 shadow-2xl"><div className={`h-12 w-12 rounded-full ${isListening ? "animate-pulse bg-white" : "bg-white/30"}`} /></div>
         <p className="mt-8 text-xs uppercase tracking-[0.35em] opacity-60">Voice Interface</p>
         <h2 className="mt-3 text-4xl font-bold tracking-[0.2em]">CALL EDEN</h2>
         <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed opacity-70">Use speech input and voice response settings for a more natural Eden session.</p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
-          {isLoggedIn ? (
-            <button type="button" onClick={onVoiceInput} className="rounded-2xl bg-white px-6 py-3 text-sm font-bold text-black">{isListening ? "Listening..." : "Start Talking"}</button>
-          ) : (
-            <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-6 py-3 text-sm font-bold text-black">Login / Sign Up</button>
-          )}
+          {isLoggedIn ? <button type="button" onClick={onVoiceInput} className="rounded-2xl bg-white px-6 py-3 text-sm font-bold text-black">{isListening ? "Listening..." : "Start Talking"}</button> : <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-6 py-3 text-sm font-bold text-black">Login / Sign Up</button>}
           <button type="button" onClick={() => onVoiceEnabledChange(!voiceEnabled)} className={toggleClass(voiceEnabled)}>Voice: {voiceEnabled ? "On" : "Off"}</button>
           <button type="button" onClick={() => onAutoReadResponsesChange(!autoReadResponses)} className={toggleClass(autoReadResponses)}>Auto Read: {autoReadResponses ? "On" : "Off"}</button>
         </div>
@@ -835,36 +765,12 @@ function UploadsPage({ currentTheme, uploadedFiles, isLoggedIn, isUploading, onU
           <p className="mt-2 text-sm opacity-70">Manage uploaded images, PDFs, text files, code files, and future multimodal inputs.</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          {isLoggedIn ? (
-            <label className="cursor-pointer rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">
-              {isUploading ? "Uploading..." : "+ Upload File"}
-              <input type="file" className="hidden" onChange={onUploadFile} />
-            </label>
-          ) : (
-            <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">Login To Upload</button>
-          )}
+          {isLoggedIn ? <label className="cursor-pointer rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">{isUploading ? "Uploading..." : "+ Upload File"}<input type="file" className="hidden" onChange={onUploadFile} /></label> : <button type="button" onClick={onLogin} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-black">Login To Upload</button>}
           {uploadedFiles.length > 0 ? <button type="button" onClick={onClearUploads} className="rounded-2xl border border-red-400/20 bg-black/30 px-5 py-3 text-sm font-bold text-red-300">Clear List</button> : null}
         </div>
       </div>
-      <div className="mt-6 rounded-3xl border border-white/10 bg-black/20 p-5">
-        <p className="text-xs uppercase tracking-[0.25em] opacity-50">Uploaded Files</p>
-        <p className="mt-2 text-3xl font-bold">{uploadedFiles.length}</p>
-      </div>
-      {uploadedFiles.length === 0 ? (
-        <div className="mt-6 rounded-3xl border border-white/10 bg-black/20 p-8 text-center">
-          <h3 className="text-xl font-bold">No uploads yet.</h3>
-          <p className="mt-3 text-sm opacity-70">Upload files from chat or this page. Eden will show them here.</p>
-        </div>
-      ) : (
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {uploadedFiles.map((file, index) => (
-            <div key={`${file}-${index}`} className="eden-card rounded-3xl border border-white/10 bg-black/20 p-5">
-              <p className="truncate text-lg font-bold">{typeof file === "string" ? file : file?.name || "Unknown file"}</p>
-              <p className="mt-2 text-xs uppercase tracking-[0.2em] opacity-50">File #{index + 1}</p>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="mt-6 rounded-3xl border border-white/10 bg-black/20 p-5"><p className="text-xs uppercase tracking-[0.25em] opacity-50">Uploaded Files</p><p className="mt-2 text-3xl font-bold">{uploadedFiles.length}</p></div>
+      {uploadedFiles.length === 0 ? <div className="mt-6 rounded-3xl border border-white/10 bg-black/20 p-8 text-center"><h3 className="text-xl font-bold">No uploads yet.</h3><p className="mt-3 text-sm opacity-70">Upload files from chat or this page. Eden will show them here.</p></div> : <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{uploadedFiles.map((file, index) => <div key={`${file?.name || file}-${index}`} className="eden-card rounded-3xl border border-white/10 bg-black/20 p-5"><p className="truncate text-lg font-bold">{typeof file === "string" ? file : file?.name || "Unknown file"}</p><p className="mt-2 text-xs uppercase tracking-[0.2em] opacity-50">File #{index + 1}</p></div>)}</div>}
     </section>
   );
 }
@@ -890,19 +796,9 @@ function CommandPalette({ open, currentTheme, recentChats, onClose, onNavigate, 
   return (
     <div className="fixed inset-0 z-[1000] flex items-start justify-center bg-black/70 p-5 pt-20 backdrop-blur-sm">
       <div className={`eden-page w-full max-w-2xl rounded-3xl border ${currentTheme.border} ${currentTheme.card} p-5 shadow-2xl`}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold tracking-[0.12em]">COMMAND PALETTE</h2>
-          <button type="button" onClick={onClose} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Close</button>
-        </div>
+        <div className="flex items-center justify-between"><h2 className="text-xl font-bold tracking-[0.12em]">COMMAND PALETTE</h2><button type="button" onClick={onClose} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold">Close</button></div>
         <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }} placeholder="Search Eden..." className="mt-5 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-sm outline-none" />
-        <div className="mt-4 max-h-[50vh] space-y-2 overflow-y-auto pr-1">
-          {actions.slice(0, 20).map((action) => (
-            <button key={`${action.type}-${action.id}`} type="button" onClick={() => run(action)} className="w-full rounded-2xl border border-white/10 bg-black/20 p-4 text-left">
-              <p className="text-sm font-bold">{action.label}</p>
-              <p className="mt-1 text-xs opacity-70">{action.type}</p>
-            </button>
-          ))}
-        </div>
+        <div className="mt-4 max-h-[50vh] space-y-2 overflow-y-auto pr-1">{actions.slice(0, 20).map((action) => <button key={`${action.type}-${action.id}`} type="button" onClick={() => run(action)} className="w-full rounded-2xl border border-white/10 bg-black/20 p-4 text-left"><p className="text-sm font-bold">{action.label}</p><p className="mt-1 text-xs opacity-70">{action.type}</p></button>)}</div>
       </div>
     </div>
   );
@@ -914,78 +810,54 @@ export default function App() {
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [messages, setMessages] = useState([{ sender: "eden", text: "I am Eden. Log in to message me and save chats." }]);
-
   const [recentChats, setRecentChats] = useState(() => readJson("eden_saved_chats", []));
   const [chatDatabase, setChatDatabase] = useState(() => readJson("eden_chat_database", {}));
   const [uploadedFiles, setUploadedFiles] = useState(() => readJson("eden_uploaded_files", []));
-
   const [themePreset, setThemePreset] = useState(localStorage.getItem("eden_theme") || "emerald");
   const [voiceEnabled, setVoiceEnabled] = useState(localStorage.getItem("eden_voice_enabled") === "true");
   const [autoReadResponses, setAutoReadResponses] = useState(localStorage.getItem("eden_auto_read") === "true");
   const [reasoningLevel, setReasoningLevel] = useState(localStorage.getItem("eden_reasoning_level") || "balanced");
   const [memoryDepth, setMemoryDepth] = useState(localStorage.getItem("eden_memory_depth") || "standard");
-
   const [soundEnabled, setSoundEnabled] = useState(localStorage.getItem("eden_sound_enabled") !== "false");
   const [startupSoundEnabled, setStartupSoundEnabled] = useState(localStorage.getItem("eden_startup_sound_enabled") !== "false");
   const [thinkingSoundEnabled, setThinkingSoundEnabled] = useState(localStorage.getItem("eden_thinking_sound_enabled") !== "false");
   const [soundVolume, setSoundVolume] = useState(clampVolume(localStorage.getItem("eden_sound_volume") || 0.45));
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [useFallbackSounds, setUseFallbackSounds] = useState(localStorage.getItem("eden_use_fallback_sounds") === "true");
-
   const [isListening, setIsListening] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-
   const [authToken, setAuthToken] = useState(localStorage.getItem("eden_token") || "");
+  const [supabaseSession, setSupabaseSession] = useState(null);
   const [username, setUsername] = useState(localStorage.getItem("eden_user") || "Guest");
   const [email, setEmail] = useState(localStorage.getItem("eden_email") || "No email connected");
   const [userId] = useState(createUserId);
   const [profilePic, setProfilePic] = useState(localStorage.getItem("eden_pfp") || EDEN_ASSETS.placeholders.profile);
-  const [accountId, setAccountId] = useState("");
+  const [accountId, setAccountId] = useState(NO_USER_ID);
   const [currentPlan, setCurrentPlan] = useState("free");
   const [subscriptionStatus, setSubscriptionStatus] = useState("active");
   const [backendOnline, setBackendOnline] = useState(false);
-
   const [commandOpen, setCommandOpen] = useState(false);
   const [authPanelOpen, setAuthPanelOpen] = useState(false);
   const [authPanelMode, setAuthPanelMode] = useState("login");
   const [toasts, setToasts] = useState([]);
   const [confirmState, setConfirmState] = useState({ open: false, title: "", description: "", confirmLabel: "Confirm", danger: false, onConfirm: null });
-
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
   const thinkingAudioRef = useRef(null);
   const audioCacheRef = useRef({});
   const audioContextRef = useRef(null);
 
-  const currentTheme = useMemo(
-    () => THEME_PRESETS.find((theme) => theme.id === themePreset) || THEME_PRESETS[0],
-    [themePreset]
-  );
-  const isLoggedIn = Boolean(authToken);
+  const currentTheme = useMemo(() => THEME_PRESETS.find((theme) => theme.id === themePreset) || THEME_PRESETS[0], [themePreset]);
+  const isLoggedIn = Boolean(authToken || supabaseSession?.access_token);
   const activeReasoning = REASONING_LEVELS.find((item) => item.id === reasoningLevel) || REASONING_LEVELS[1];
   const activeMemory = MEMORY_DEPTHS.find((item) => item.id === memoryDepth) || MEMORY_DEPTHS[1];
-
   const isCaptchaPage = window.location.pathname.includes("/anti-bot/captcha");
 
-if (isCaptchaPage) {
-  return <CaptchaPage />;
-}
-
-  useEffect(() => {
-  const isCaptchaPage = window.location.pathname.includes("/anti-bot/captcha");
-
-  if (!isCaptchaPage && shouldShowCaptcha()) {
-    window.location.href = makeCaptchaPath();
-  }
- }, []);
-  
   function pushToast(type, title, message) {
     const toast = makeToast(type, title, message);
     setToasts((current) => [toast, ...current].slice(0, 5));
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((item) => item.id !== toast.id));
-    }, 3500);
+    window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== toast.id)), 3500);
   }
 
   function dismissToast(id) {
@@ -1006,23 +878,16 @@ if (isCaptchaPage) {
   function playFallbackTone(name = "success", options = {}) {
     if (options.allowFallback === false) return null;
     if (!useFallbackSounds && !options.forceFallback) return null;
-
     const context = getAudioContext();
     if (!context) return null;
-
-    if (context.state === "suspended") {
-      context.resume().catch(() => {});
-    }
-
+    if (context.state === "suspended") context.resume().catch(() => {});
     const sequence = FALLBACK_TONES[name] || FALLBACK_TONES.success;
     const gain = context.createGain();
     const volume = clampVolume(options.volume ?? soundVolume) * 0.18;
-
     gain.gain.setValueAtTime(0.0001, context.currentTime);
     gain.gain.exponentialRampToValueAtTime(Math.max(volume, 0.0002), context.currentTime + 0.015);
     gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.12 + sequence.length * 0.045);
     gain.connect(context.destination);
-
     sequence.forEach((frequency, index) => {
       const oscillator = context.createOscillator();
       oscillator.type = name === "error" || name === "warning" ? "sawtooth" : "sine";
@@ -1031,7 +896,6 @@ if (isCaptchaPage) {
       oscillator.start(context.currentTime + index * 0.055);
       oscillator.stop(context.currentTime + index * 0.055 + 0.11);
     });
-
     return true;
   }
 
@@ -1049,31 +913,23 @@ if (isCaptchaPage) {
   function playSound(name, options = {}) {
     if (!soundEnabled && !options.force) return null;
     if (!audioUnlocked && !options.force) return null;
-
     const src = EDEN_SOUNDS[name];
     const allowFallback = options.allowFallback !== false;
-
     if (!src) {
       if (allowFallback) playFallbackTone(name, options);
       return null;
     }
-
     try {
       const cached = audioCacheRef.current[name];
       const audio = cached ? cached.cloneNode(true) : new Audio(src);
-
       audio.volume = clampVolume(options.volume ?? soundVolume);
       audio.loop = Boolean(options.loop);
       audio.currentTime = 0;
-
-      audio.play().catch((error) => {
-        console.warn(`Eden MP3 sound failed: ${name}`, error);
+      audio.play().catch(() => {
         if (allowFallback) playFallbackTone(name, options);
       });
-
       return audio;
-    } catch (error) {
-      console.warn(`Eden MP3 sound crashed: ${name}`, error);
+    } catch {
       if (allowFallback) playFallbackTone(name, options);
       return null;
     }
@@ -1081,24 +937,12 @@ if (isCaptchaPage) {
 
   function unlockAudio(options = {}) {
     preloadSounds();
-
     const context = getAudioContext();
-    if (context && context.state === "suspended") {
-      context.resume().catch(() => {});
-    }
-
+    if (context && context.state === "suspended") context.resume().catch(() => {});
     setAudioUnlocked(true);
     localStorage.setItem("eden_audio_unlocked", "true");
-
-    const soundName = options.soundName || "success";
-
-    window.setTimeout(() => {
-      playSound(soundName, { force: true, allowFallback: false });
-    }, 60);
-
-    if (options.showToast !== false) {
-      pushToast("success", "Sounds enabled", "Eden audio is unlocked. MP3 files are primary.");
-    }
+    window.setTimeout(() => playSound(options.soundName || "success", { force: true, allowFallback: false }), 60);
+    if (options.showToast !== false) pushToast("success", "Sounds enabled", "Eden audio is unlocked. MP3 files are primary.");
   }
 
   function stopThinkingSound() {
@@ -1117,14 +961,7 @@ if (isCaptchaPage) {
   }
 
   function openConfirm(options) {
-    setConfirmState({
-      open: true,
-      title: options.title || "Confirm action",
-      description: options.description || "Are you sure?",
-      confirmLabel: options.confirmLabel || "Confirm",
-      danger: Boolean(options.danger),
-      onConfirm: options.onConfirm || null,
-    });
+    setConfirmState({ open: true, title: options.title || "Confirm action", description: options.description || "Are you sure?", confirmLabel: options.confirmLabel || "Confirm", danger: Boolean(options.danger), onConfirm: options.onConfirm || null });
   }
 
   function closeConfirm() {
@@ -1142,16 +979,68 @@ if (isCaptchaPage) {
     playSound("panelClose", { force: true });
   }
 
+  function getAuthHeaders(extra = {}) {
+    const token = authToken || supabaseSession?.access_token || "";
+    return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+  }
+
+  async function checkBackendOnline() {
+    if (!API_BASE) {
+      setBackendOnline(false);
+      return;
+    }
+    try {
+      let response = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+      if (!response.ok) response = await fetch(`${API_BASE}/`, { cache: "no-store" });
+      setBackendOnline(response.ok);
+    } catch {
+      setBackendOnline(false);
+    }
+  }
+
+  async function loadAccount(token = authToken || supabaseSession?.access_token) {
+    if (!token || !API_BASE) return;
+    try {
+      const response = await fetch(`${API_BASE}/account/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) return;
+      const data = await response.json();
+      const account = data.account || {};
+      const subscription = data.subscription || {};
+      setAccountId(account.account_id || account.id || NO_USER_ID);
+      setUsername(account.username || "User");
+      setEmail(account.email || "No email connected");
+      setProfilePic(account.profile_picture_url || EDEN_ASSETS.placeholders.profile);
+      setCurrentPlan(subscription.plan || "free");
+      setSubscriptionStatus(subscription.status || "active");
+    } catch {}
+  }
+
+  async function loadBackendChats() {
+    try {
+      const chats = await loadSupabaseChats();
+      setRecentChats(chats.map((chat) => ({ id: chat.id, title: chat.title || "New Chat", createdAt: new Date(chat.created_at || Date.now()).getTime(), updatedAt: new Date(chat.updated_at || chat.created_at || Date.now()).getTime() })));
+    } catch {}
+  }
+
+  async function saveBackendMessage(chatId, message) {
+    if (!chatId || !message?.text) return;
+    try {
+      const role = message.sender === "eden" ? "assistant" : "user";
+      await saveSupabaseMessage(chatId, role, message.text);
+    } catch {}
+  }
+
   function handleAuthSuccess(result = {}) {
     const user = result.user || {};
     const nextToken = result.token || localStorage.getItem("eden_token") || "";
     const nextUsername = user.username || localStorage.getItem("eden_user") || "User";
     const nextEmail = user.email || localStorage.getItem("eden_email") || "No email connected";
     const nextPicture = user.avatar_url || localStorage.getItem("eden_pfp") || profilePic;
-
     if (nextToken) {
+      localStorage.setItem("eden_token", nextToken);
       setAuthToken(nextToken);
       loadAccount(nextToken);
+      loadBackendChats();
     }
     setUsername(nextUsername);
     setEmail(nextEmail);
@@ -1161,237 +1050,6 @@ if (isCaptchaPage) {
     pushToast("success", "Logged in", `Welcome, ${nextUsername}.`);
   }
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setIsBooting(false);
-    }, STARTUP_LOADING_MS);
-
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    preloadSounds();
-  }, []);
-
-  useEffect(() => {
-    checkBackendOnline();
-
-    const timer = window.setInterval(() => {
-      checkBackendOnline();
-    }, 30000);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    const usernameParam = params.get("username");
-    const emailParam = params.get("email");
-    const pictureParam = params.get("picture");
-    const requires2FA = params.get("requires_2fa") === "true";
-    const pendingToken = params.get("pending_token") || "";
-
-    if (token) {
-      localStorage.setItem("eden_token", token);
-      setAuthToken(token);
-      loadBackendChats(token);
-      loadAccount(token);
-      playSound("login", { force: true });
-      pushToast("success", "Logged in", "Authentication connected to Eden.");
-    }
-    if (usernameParam) {
-      localStorage.setItem("eden_user", usernameParam);
-      setUsername(usernameParam);
-    }
-    if (emailParam) {
-      localStorage.setItem("eden_email", emailParam);
-      setEmail(emailParam);
-    }
-    if (pictureParam) {
-      localStorage.setItem("eden_pfp", pictureParam);
-      setProfilePic(pictureParam);
-    }
-    if (requires2FA && pendingToken) {
-      localStorage.setItem("eden_pending_2fa_token", pendingToken);
-      setAuthPanelMode("2fa-login");
-      setAuthPanelOpen(true);
-      pushToast("warning", "2FA required", "Enter your authenticator or backup code.");
-    }
-    if (token || usernameParam || emailParam || pictureParam || requires2FA || pendingToken) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (authToken) {
-      loadBackendChats(authToken);
-      loadAccount(authToken);
-    }
-  }, [authToken]);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  useEffect(() => { writeJson("eden_saved_chats", recentChats); }, [recentChats]);
-  useEffect(() => { writeJson("eden_chat_database", chatDatabase); }, [chatDatabase]);
-  useEffect(() => { writeJson("eden_uploaded_files", uploadedFiles); }, [uploadedFiles]);
-  useEffect(() => { localStorage.setItem("eden_voice_enabled", String(voiceEnabled)); }, [voiceEnabled]);
-  useEffect(() => { localStorage.setItem("eden_auto_read", String(autoReadResponses)); }, [autoReadResponses]);
-  useEffect(() => { localStorage.setItem("eden_reasoning_level", reasoningLevel); }, [reasoningLevel]);
-  useEffect(() => { localStorage.setItem("eden_memory_depth", memoryDepth); }, [memoryDepth]);
-  useEffect(() => { localStorage.setItem("eden_sound_enabled", String(soundEnabled)); }, [soundEnabled]);
-  useEffect(() => { localStorage.setItem("eden_startup_sound_enabled", String(startupSoundEnabled)); }, [startupSoundEnabled]);
-  useEffect(() => { localStorage.setItem("eden_thinking_sound_enabled", String(thinkingSoundEnabled)); }, [thinkingSoundEnabled]);
-  useEffect(() => { localStorage.setItem("eden_sound_volume", String(clampVolume(soundVolume))); }, [soundVolume]);
-  useEffect(() => { localStorage.setItem("eden_use_fallback_sounds", String(useFallbackSounds)); }, [useFallbackSounds]);
-
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setCommandOpen(true);
-        playSound("panelOpen", { force: true });
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [soundEnabled, soundVolume, audioUnlocked, useFallbackSounds]);
-
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) recognitionRef.current.stop();
-      window.speechSynthesis?.cancel();
-      stopThinkingSound();
-      try {
-        audioContextRef.current?.close?.();
-      } catch {}
-    };
-  }, []);
-
-    useEffect(() => {
-  async function loadSupabaseUser() {
-    const { data } = await supabase.auth.getUser();
-    const user = data?.user;
-
-    if (!user) return;
-
-    const profile = await getOrCreateProfile(user);
-
-    setAccountId(profile.account_id);
-    setUsername(profile.username || "User");
-    setEmail(profile.email || "No email connected");
-    setProfilePic(profile.avatar_url || EDEN_ASSETS.placeholders.profile);
-    setCurrentPlan(profile.plan || "free");
-    setSubscriptionStatus(profile.subscription_status || "active");
-  }
-
-  loadSupabaseUser();
-}, []);
-  function getAuthHeaders(extra = {}) {
-    return { ...extra, Authorization: `Bearer ${authToken}` };
-  }
-
-  useEffect(() => {
-  const {
-    data: { subscription },
-  } = supabase.auth.onAuthStateChange(async (_event, session) => {
-    const user = session?.user;
-
-    if (!user) {
-      return;
-    }
-
-    try {
-      const profile = await getOrCreateProfile(user);
-
-      setAccountId(profile.account_id);
-      setUsername(profile.username || "User");
-      setEmail(profile.email || "No email connected");
-      setProfilePic(profile.avatar_url || EDEN_ASSETS.placeholders.profile);
-      setCurrentPlan(profile.plan || "free");
-      setSubscriptionStatus(profile.subscription_status || "active");
-    } catch (error) {
-      console.warn("Supabase profile sync failed.", error);
-    }
-  });
-
-  return () => subscription.unsubscribe();
-}, []);
-
-  async function checkBackendOnline() {
-    if (!API_BASE) {
-      setBackendOnline(false);
-      return;
-    }
-
-    try {
-      let response = await fetch(`${API_BASE}/health`, { cache: "no-store" });
-
-      if (!response.ok) {
-        response = await fetch(`${API_BASE}/`, { cache: "no-store" });
-      }
-
-      setBackendOnline(response.ok);
-    } catch {
-      setBackendOnline(false);
-    }
-  }
-
-  async function loadAccount(token = authToken) {
-    if (!token || !API_BASE) return;
-
-    try {
-      const response = await fetch(`${API_BASE}/account/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) return;
-
-      const data = await response.json();
-      const account = data.account || {};
-      const subscription = data.subscription || {};
-
-      setAccountId(account.account_id || account.id || "");
-      setUsername(account.username || "User");
-      setEmail(account.email || "No email connected");
-      setProfilePic(account.profile_picture_url || EDEN_ASSETS.placeholders.profile);
-      setCurrentPlan(subscription.plan || "free");
-      setSubscriptionStatus(subscription.status || "active");
-    } catch (error) {
-      console.warn("Could not load backend account.", error);
-    }
-  }
-
-  async function loadBackendChats() {
-  try {
-    const chats = await loadSupabaseChats();
-
-    setRecentChats(
-      chats.map((chat) => ({
-        id: chat.id,
-        title: chat.title,
-        createdAt: new Date(chat.created_at).getTime(),
-        updatedAt: new Date(chat.updated_at).getTime(),
-      }))
-    );
-  } catch (error) {
-    console.warn("Supabase chats unavailable. Using local cache.", error);
-  }
-}
-
-  async function saveBackendMessage(chatId, message) {
-  if (!chatId || !message?.text) return;
-
-  try {
-    const role = message.sender === "eden" ? "assistant" : "user";
-    await saveSupabaseMessage(chatId, role, message.text);
-  } catch (error) {
-    console.warn("Message saved locally only.", error);
-  }
-}
-
   function changeTheme(themeId) {
     localStorage.setItem("eden_theme", themeId);
     setThemePreset(themeId);
@@ -1400,39 +1058,30 @@ if (isCaptchaPage) {
   }
 
   async function loginWithGoogle() {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: window.location.origin,
-    },
-  });
-
-  if (error) {
-    pushToast("error", "Login failed", error.message);
+    const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
+    if (error) pushToast("error", "Login failed", error.message);
   }
-}
 
-  function logout() {
-    supabase.auth.signOut();
-    
+  async function logout() {
+    await supabase.auth.signOut().catch(() => {});
     localStorage.removeItem("eden_token");
     localStorage.removeItem("eden_user");
     localStorage.removeItem("eden_email");
     localStorage.removeItem("eden_pfp");
     localStorage.removeItem("eden_pending_2fa_token");
-
     setAuthToken("");
+    setSupabaseSession(null);
     setUsername("Guest");
     setEmail("No email connected");
-    setAccountId("");
+    setAccountId(NO_USER_ID);
     setCurrentPlan("free");
     setSubscriptionStatus("active");
     setProfilePic(EDEN_ASSETS.placeholders.profile);
-
+    setSessionId("");
+    setMessages([{ sender: "eden", text: "Logged out. Log in to message Eden." }]);
     setActivePage("chat");
     window.speechSynthesis?.cancel();
     stopThinkingSound();
-    setMessages([{ sender: "eden", text: "Logged out. Log in to message Eden." }]);
     playSound("logout", { force: true });
     pushToast("info", "Logged out", "You have been signed out of Eden.");
   }
@@ -1456,140 +1105,87 @@ if (isCaptchaPage) {
   }
 
   async function createBackendChat(title, starterMessages = []) {
-    if (!authToken) return createLocalChat(title, starterMessages);
     try {
-      const response = await fetch(`${API_BASE}/chats`, {
-        method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ title }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const newId = data.id;
-      const newChat = {
-        id: newId,
-        title: data.title || title || `New Chat ${recentChats.length + 1}`,
-        createdAt: data.created_at || Date.now(),
-        updatedAt: data.updated_at || data.created_at || Date.now(),
-      };
-      setRecentChats((current) => [newChat, ...current.filter((chat) => chat.id !== newId)]);
-      setChatDatabase((current) => ({ ...current, [newId]: starterMessages }));
-      setSessionId(newId);
-      for (const message of starterMessages) await saveBackendMessage(newId, message);
-      return newId;
+      const chat = await createSupabaseChat(title || `New Chat ${recentChats.length + 1}`);
+      const newChat = { id: chat.id, title: chat.title || title || `New Chat ${recentChats.length + 1}`, createdAt: new Date(chat.created_at || Date.now()).getTime(), updatedAt: new Date(chat.updated_at || chat.created_at || Date.now()).getTime() };
+      setRecentChats((current) => [newChat, ...current.filter((item) => item.id !== newChat.id)]);
+      setChatDatabase((current) => ({ ...current, [newChat.id]: starterMessages }));
+      setSessionId(newChat.id);
+      for (const message of starterMessages) await saveBackendMessage(newChat.id, message);
+      return newChat.id;
     } catch {
       return createLocalChat(title, starterMessages);
     }
   }
 
   async function startNewChat() {
-  if (!isLoggedIn) {
-    openAuthPanel("login");
-    return;
-  }
-
-  try {
-    const chat = await createSupabaseChat("New Chat");
-
-    const mappedChat = {
-      id: chat.id,
-      title: chat.title || "New Chat",
-      createdAt: new Date(chat.created_at).getTime(),
-      updatedAt: new Date(chat.updated_at).getTime(),
-    };
-
-    setRecentChats((current) => [mappedChat, ...current]);
-    setSessionId(chat.id);
-    setMessages([]);
-    setActivePage("chat");
-    playSound("openChat", { force: true });
-  } catch (error) {
-    pushToast("error", "New chat failed", error.message);
-  }
-}
+    if (!isLoggedIn) {
+      playSound("warning", { force: true });
+      pushToast("warning", "Login required", "Log in before creating saved chats.");
+      await loginWithGoogle();
+      return;
+    }
     const starterMessages = [{ sender: "eden", text: "New chat initialized." }];
-    createBackendChat(`New Chat ${recentChats.length + 1}`, starterMessages).then((newId) => {
-      setSessionId(newId);
-      setMessages(starterMessages);
-      setActivePage("chat");
-      playSound("success", { force: true });
-      pushToast("success", "New chat", "A new Eden chat has been created.");
-    });
-  }
-
- async function openRecentChat(chat) {
-  try {
-    const savedMessages = await loadSupabaseMessages(chat.id);
-
-    setSessionId(chat.id);
-    setMessages(savedMessages);
+    const newId = await createBackendChat(`New Chat ${recentChats.length + 1}`, starterMessages);
+    setSessionId(newId);
+    setMessages(starterMessages);
     setActivePage("chat");
-    playSound("openChat", { force: true });
-  } catch (error) {
-    pushToast("error", "Could not open chat", error.message);
+    playSound("success", { force: true });
   }
-}
+
+  async function openChat(chat) {
+    try {
+      const savedMessages = await loadSupabaseMessages(chat.id);
+      const cleanMessages = savedMessages.length ? savedMessages : chatDatabase[chat.id] || [];
+      setSessionId(chat.id);
+      setMessages(cleanMessages);
+      setChatDatabase((current) => ({ ...current, [chat.id]: cleanMessages }));
+      setActivePage("chat");
+      playSound("openChat", { force: true });
+    } catch (error) {
+      const localMessages = chatDatabase[chat.id] || [];
+      if (localMessages.length) {
+        setSessionId(chat.id);
+        setMessages(localMessages);
+        setActivePage("chat");
+        playSound("openChat", { force: true });
+        return;
+      }
+      pushToast("error", "Could not open chat", error.message);
+    }
+  }
 
   async function renameChat(chatId) {
-  const chat = recentChats.find((item) => item.id === chatId);
-  const nextTitle = window.prompt("Rename chat:", chat?.title || "New Chat");
-
-  if (!nextTitle || !nextTitle.trim()) return;
-
-  try {
-    const updated = await renameSupabaseChat(chatId, nextTitle.trim());
-
-    setRecentChats((current) =>
-      current.map((item) =>
-        item.id === chatId
-          ? {
-              ...item,
-              title: updated.title,
-              updatedAt: new Date(updated.updated_at).getTime(),
-            }
-          : item
-      )
-    );
-
+    const chat = recentChats.find((item) => item.id === chatId);
+    const nextTitle = window.prompt("Rename chat:", chat?.title || "New Chat");
+    if (!nextTitle || !nextTitle.trim()) return;
+    const cleanTitle = nextTitle.trim();
+    try {
+      const updated = await renameSupabaseChat(chatId, cleanTitle);
+      setRecentChats((current) => current.map((item) => item.id === chatId ? { ...item, title: updated.title || cleanTitle, updatedAt: new Date(updated.updated_at || Date.now()).getTime() } : item));
+      pushToast("success", "Chat renamed", "Saved to Supabase.");
+    } catch (error) {
+      setRecentChats((current) => current.map((item) => item.id === chatId ? { ...item, title: cleanTitle, updatedAt: Date.now() } : item));
+      pushToast("warning", "Renamed locally", error.message);
+    }
     playSound("renameChat", { force: true });
-    pushToast("success", "Chat renamed", "Saved to Supabase.");
-  } catch (error) {
-    pushToast("error", "Rename failed", error.message);
   }
-}
 
-  function deleteChat(chatId) {
-  openConfirm({
-    title: "Delete chat?",
-    description: "This will delete the saved chat and its messages from Supabase.",
-    confirmLabel: "Delete",
-    danger: true,
-    onConfirm: async () => {
-      try {
-        await deleteSupabaseChat(chatId);
-
-        setRecentChats((current) => current.filter((chat) => chat.id !== chatId));
-        setChatDatabase((current) => {
-          const copy = { ...current };
-          delete copy[chatId];
-          return copy;
-        });
-
-        if (sessionId === chatId) {
-          setSessionId("");
-          setMessages([]);
-        }
-
-        closeConfirm();
-        playSound("deleteChat", { force: true });
-        pushToast("success", "Chat deleted", "Removed from Supabase.");
-      } catch (error) {
-        closeConfirm();
-        pushToast("error", "Delete failed", error.message);
-      }
-    },
-  });
-}
+  async function deleteChat(chatId) {
+    await deleteSupabaseChat(chatId).catch(() => {});
+    setRecentChats((current) => current.filter((chat) => chat.id !== chatId));
+    setChatDatabase((current) => {
+      const copy = { ...current };
+      delete copy[chatId];
+      return copy;
+    });
+    if (sessionId === chatId) {
+      setSessionId("");
+      setMessages([]);
+    }
+    playSound("deleteChat", { force: true });
+    pushToast("success", "Chat deleted", "The chat was removed.");
+  }
 
   function confirmDeleteChat(chatId) {
     const chat = recentChats.find((item) => item.id === chatId);
@@ -1604,18 +1200,19 @@ if (isCaptchaPage) {
       setMessages((current) => [...current, { sender: "eden", text: "Please log in before messaging Eden." }]);
       playSound("warning", { force: true });
       pushToast("warning", "Login required", "Log in before messaging Eden.");
-      openAuthPanel("login");
+      await loginWithGoogle();
       return;
     }
-
+    if (!API_BASE) {
+      pushToast("error", "Backend missing", "VITE_API_BASE is not configured.");
+      return;
+    }
     let activeSessionId = sessionId;
     if (!activeSessionId) activeSessionId = await createBackendChat(userMessage.slice(0, 36) || `New Chat ${recentChats.length + 1}`, []);
-
     setInput("");
     setIsSending(true);
     playSound("send", { force: true });
     startThinkingSound();
-
     const baseMessages = chatDatabase[activeSessionId] || messages;
     const userEntry = { sender: "user", text: userMessage };
     const edenEntry = { sender: "eden", text: "" };
@@ -1623,19 +1220,10 @@ if (isCaptchaPage) {
     setMessages(pendingMessages);
     saveChatMessages(activeSessionId, pendingMessages);
     await saveBackendMessage(activeSessionId, userEntry);
-
     let fullResponse = "";
     try {
-      const response = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ message: userMessage, session_id: activeSessionId, reasoning_level: reasoningLevel, memory_depth: memoryDepth }),
-      });
-      if (!response.ok) {
-        const rawText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${rawText}`);
-      }
-
+      const response = await fetch(`${API_BASE}/chat`, { method: "POST", headers: getAuthHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ message: userMessage, session_id: activeSessionId, reasoning_level: reasoningLevel, memory_depth: memoryDepth }) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       const contentType = response.headers.get("content-type") || "";
       if (response.body && contentType.includes("text/event-stream")) {
         const reader = response.body.getReader();
@@ -1681,7 +1269,6 @@ if (isCaptchaPage) {
           return updated;
         });
       }
-
       await saveBackendMessage(activeSessionId, { sender: "eden", text: fullResponse || "Eden processed the message but returned no response." });
       if (voiceEnabled && autoReadResponses && fullResponse) window.speechSynthesis.speak(new SpeechSynthesisUtterance(fullResponse));
       playSound("message", { force: true });
@@ -1725,53 +1312,33 @@ if (isCaptchaPage) {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!isLoggedIn) {
-      setMessages((current) => [...current, { sender: "eden", text: "Please log in before uploading files." }]);
-      playSound("warning", { force: true });
       pushToast("warning", "Login required", "Log in before uploading files.");
-      openAuthPanel("login");
+      await loginWithGoogle();
       event.target.value = "";
       return;
     }
-
-    let activeSessionId = sessionId;
-    if (!activeSessionId) activeSessionId = await createBackendChat(`Upload ${file.name}`.slice(0, 36), []);
     setIsUploading(true);
     playSound("uploadStart", { force: true });
-    setUploadedFiles((current) => [...current, file.name]);
-    const formData = new FormData();
-    formData.append("file", file);
-    const uploadMessages = [...(chatDatabase[activeSessionId] || messages), { sender: "user", text: `Uploaded: ${file.name}` }, { sender: "eden", text: "Analyzing upload..." }];
-    setMessages(uploadMessages);
-    saveChatMessages(activeSessionId, uploadMessages);
-
+    const nextFile = { name: file.name, size: file.size, type: file.type, uploadedAt: Date.now() };
+    setUploadedFiles((current) => [nextFile, ...current]);
     try {
-      const response = await fetch(`${API_BASE}/upload/analyze`, { method: "POST", headers: { Authorization: `Bearer ${authToken}` }, body: formData });
-      const rawText = await response.text();
-      let data = null;
-      try { data = rawText ? JSON.parse(rawText) : null; } catch { data = null; }
-      if (!response.ok) throw new Error(rawText || `HTTP ${response.status}`);
-      const responseText = data?.analysis || data?.text_preview || data?.message || "Upload processed successfully.";
-      setMessages((current) => {
-        const updated = [...current];
-        const lastIndex = updated.length - 1;
-        if (updated[lastIndex]?.sender === "eden") updated[lastIndex] = { ...updated[lastIndex], text: responseText };
-        saveChatMessages(activeSessionId, updated);
-        return updated;
-      });
-      await saveBackendMessage(activeSessionId, { sender: "user", text: `Uploaded: ${file.name}` });
-      await saveBackendMessage(activeSessionId, { sender: "eden", text: responseText });
+      if (API_BASE && (authToken || supabaseSession?.access_token)) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const response = await fetch(`${API_BASE}/upload/analyze`, { method: "POST", headers: getAuthHeaders(), body: formData });
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.summary || data.response || `Uploaded ${file.name}.`;
+          setMessages((current) => [...current, { sender: "eden", text }]);
+        }
+      } else {
+        setMessages((current) => [...current, { sender: "eden", text: `Uploaded ${file.name}. Backend upload analysis is not connected yet.` }]);
+      }
       playSound("uploadComplete", { force: true });
       pushToast("success", "Upload complete", file.name);
     } catch (error) {
       playSound("error", { force: true });
       pushToast("error", "Upload failed", error.message);
-      setMessages((current) => {
-        const updated = [...current];
-        const lastIndex = updated.length - 1;
-        if (updated[lastIndex]?.sender === "eden") updated[lastIndex] = { sender: "eden", text: `Upload failed: ${error.message}` };
-        saveChatMessages(activeSessionId, updated);
-        return updated;
-      });
     } finally {
       setIsUploading(false);
       event.target.value = "";
@@ -1779,44 +1346,179 @@ if (isCaptchaPage) {
   }
 
   function clearUploads() {
-    openConfirm({
-      title: "Clear upload list?",
-      description: "This clears the frontend upload history list. It does not delete backend files yet.",
-      confirmLabel: "Clear",
-      danger: true,
-      onConfirm: () => {
-        setUploadedFiles([]);
-        pushToast("info", "Uploads cleared", "Upload history was cleared locally.");
-      },
-    });
+    openConfirm({ title: "Clear uploads?", description: "This clears the local upload list from the interface.", confirmLabel: "Clear", danger: true, onConfirm: () => { setUploadedFiles([]); pushToast("success", "Uploads cleared", "Upload list cleared."); } });
   }
 
   async function handleProfilePicChange(value) {
-    if (!value) return;
-
     setProfilePic(value);
-
-    if (!authToken || !API_BASE) {
-      pushToast("success", "Profile updated", "Profile picture changed locally.");
-      return;
-    }
-
+    localStorage.setItem("eden_pfp", value);
     try {
-      const response = await fetch(`${API_BASE}/account/me`, {
-        method: "PATCH",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ profile_picture_url: value }),
-      });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      await loadAccount(authToken);
-      pushToast("success", "Profile updated", "Profile picture saved to your account.");
-    } catch (error) {
-      console.warn("Profile picture saved locally only.", error);
-      pushToast("warning", "Profile saved locally", "Backend profile update failed.");
+      const userIdForProfile = supabaseSession?.user?.id;
+      if (userIdForProfile) await supabase.from("profiles").update({ avatar_url: value }).eq("id", userIdForProfile);
+      if (authToken && API_BASE) {
+        const response = await fetch(`${API_BASE}/account/me`, { method: "PATCH", headers: getAuthHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ profile_picture_url: value }) });
+        if (response.ok) await loadAccount(authToken);
+      }
+      pushToast("success", "Profile updated", "Profile picture updated.");
+    } catch {
+      pushToast("warning", "Profile saved locally", "Profile picture changed locally.");
     }
   }
+
+  useEffect(() => {
+    if (!isCaptchaPage && shouldShowCaptcha()) window.location.href = makeCaptchaPath();
+  }, [isCaptchaPage]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsBooting(false), STARTUP_LOADING_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    preloadSounds();
+  }, []);
+
+  useEffect(() => {
+    checkBackendOnline();
+    const timer = window.setInterval(checkBackendOnline, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    const usernameParam = params.get("username");
+    const emailParam = params.get("email");
+    const pictureParam = params.get("picture");
+    const requires2FA = params.get("requires_2fa") === "true";
+    const pendingToken = params.get("pending_token") || "";
+    if (token) {
+      localStorage.setItem("eden_token", token);
+      setAuthToken(token);
+      loadBackendChats();
+      loadAccount(token);
+      playSound("login", { force: true });
+      pushToast("success", "Logged in", "Authentication connected to Eden.");
+    }
+    if (usernameParam) {
+      localStorage.setItem("eden_user", usernameParam);
+      setUsername(usernameParam);
+    }
+    if (emailParam) {
+      localStorage.setItem("eden_email", emailParam);
+      setEmail(emailParam);
+    }
+    if (pictureParam) {
+      localStorage.setItem("eden_pfp", pictureParam);
+      setProfilePic(pictureParam);
+    }
+    if (requires2FA && pendingToken) {
+      localStorage.setItem("eden_pending_2fa_token", pendingToken);
+      setAuthPanelMode("2fa-login");
+      setAuthPanelOpen(true);
+      pushToast("warning", "2FA required", "Enter your authenticator or backup code.");
+    }
+    if (token || usernameParam || emailParam || pictureParam || requires2FA || pendingToken) window.history.replaceState({}, document.title, window.location.pathname);
+  }, []);
+
+  useEffect(() => {
+    if (authToken) {
+      loadBackendChats();
+      loadAccount(authToken);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  useEffect(() => { writeJson("eden_saved_chats", recentChats); }, [recentChats]);
+  useEffect(() => { writeJson("eden_chat_database", chatDatabase); }, [chatDatabase]);
+  useEffect(() => { writeJson("eden_uploaded_files", uploadedFiles); }, [uploadedFiles]);
+  useEffect(() => { localStorage.setItem("eden_voice_enabled", String(voiceEnabled)); }, [voiceEnabled]);
+  useEffect(() => { localStorage.setItem("eden_auto_read", String(autoReadResponses)); }, [autoReadResponses]);
+  useEffect(() => { localStorage.setItem("eden_reasoning_level", reasoningLevel); }, [reasoningLevel]);
+  useEffect(() => { localStorage.setItem("eden_memory_depth", memoryDepth); }, [memoryDepth]);
+  useEffect(() => { localStorage.setItem("eden_sound_enabled", String(soundEnabled)); }, [soundEnabled]);
+  useEffect(() => { localStorage.setItem("eden_startup_sound_enabled", String(startupSoundEnabled)); }, [startupSoundEnabled]);
+  useEffect(() => { localStorage.setItem("eden_thinking_sound_enabled", String(thinkingSoundEnabled)); }, [thinkingSoundEnabled]);
+  useEffect(() => { localStorage.setItem("eden_sound_volume", String(clampVolume(soundVolume))); }, [soundVolume]);
+  useEffect(() => { localStorage.setItem("eden_use_fallback_sounds", String(useFallbackSounds)); }, [useFallbackSounds]);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen(true);
+        playSound("panelOpen", { force: true });
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [soundEnabled, soundVolume, audioUnlocked, useFallbackSounds]);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) recognitionRef.current.stop();
+      window.speechSynthesis?.cancel();
+      stopThinkingSound();
+      try {
+        audioContextRef.current?.close?.();
+      } catch {}
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function syncSupabaseProfile(user) {
+      if (!user) return;
+      try {
+        const profile = await getOrCreateProfile(user);
+        if (!active || !profile) return;
+        const nextAccountId = await ensureProfileAccountId(user, profile);
+        setAccountId(nextAccountId);
+        setUsername(profile.username || user.user_metadata?.name || user.email?.split("@")[0] || "User");
+        setEmail(profile.email || user.email || "No email connected");
+        setProfilePic(profile.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture || EDEN_ASSETS.placeholders.profile);
+        setCurrentPlan(profile.plan || "free");
+        setSubscriptionStatus(profile.subscription_status || "active");
+      } catch {}
+    }
+
+    async function loadSupabaseSession() {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !active) return;
+      const session = data?.session || null;
+      setSupabaseSession(session);
+      if (session?.access_token) setAuthToken((current) => current || session.access_token);
+      if (session?.user) {
+        await syncSupabaseProfile(session.user);
+        await loadBackendChats();
+      }
+    }
+
+    loadSupabaseSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!active) return;
+      setSupabaseSession(session || null);
+      if (session?.access_token) setAuthToken(session.access_token);
+      if (!session?.user) {
+        setAccountId(NO_USER_ID);
+        setCurrentPlan("free");
+        setSubscriptionStatus("active");
+        return;
+      }
+      await syncSupabaseProfile(session.user);
+      await loadBackendChats();
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const appStyles = `
     @keyframes edenFadeIn { from { opacity: 0; transform: translateY(10px) scale(0.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
@@ -1832,31 +1534,16 @@ if (isCaptchaPage) {
     if (activePage === "saved-chats") return <SavedChatsPage chats={recentChats} chatDatabase={chatDatabase} currentTheme={currentTheme} onStartNewChat={startNewChat} onOpenChat={openChat} onRenameChat={renameChat} onDeleteChat={confirmDeleteChat} appVersion={APP_VERSION} />;
     if (activePage === "customize") return <CustomizePage currentTheme={currentTheme} themePreset={themePreset} themePresets={THEME_PRESETS} onThemeChange={changeTheme} />;
     if (activePage === "settings") return <SettingsPage currentTheme={currentTheme} voiceEnabled={voiceEnabled} autoReadResponses={autoReadResponses} reasoningLevel={reasoningLevel} memoryDepth={memoryDepth} soundEnabled={soundEnabled} startupSoundEnabled={startupSoundEnabled} thinkingSoundEnabled={thinkingSoundEnabled} soundVolume={soundVolume} audioUnlocked={audioUnlocked} useFallbackSounds={useFallbackSounds} reasoningLevels={REASONING_LEVELS} memoryDepths={MEMORY_DEPTHS} sounds={EDEN_SOUNDS} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onReasoningLevelChange={setReasoningLevel} onMemoryDepthChange={setMemoryDepth} onSoundEnabledChange={setSoundEnabled} onStartupSoundEnabledChange={setStartupSoundEnabled} onThinkingSoundEnabledChange={setThinkingSoundEnabled} onSoundVolumeChange={setSoundVolume} onFallbackSoundsChange={setUseFallbackSounds} onUnlockAudio={unlockAudio} onPlaySound={playSound} />;
-    if (activePage === "account") return <AccountOverview currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} email={email} userId={accountId || userId} profilePic={profilePic} recentChats={recentChats} uploadedFiles={uploadedFiles} onProfilePicChange={handleProfilePicChange} onLogin={loginWithGoogle} onLogout={confirmLogout} onOpen2FA={() => openAuthPanel("2fa-manage")} />;
+    if (activePage === "account") return <AccountOverview currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} email={email} userId={isLoggedIn ? accountId || userId : NO_USER_ID} profilePic={profilePic} recentChats={recentChats} uploadedFiles={uploadedFiles} onProfilePicChange={handleProfilePicChange} onLogin={loginWithGoogle} onLogout={confirmLogout} onOpen2FA={() => openAuthPanel("2fa-manage")} />;
     if (activePage === "legal") return <LegalPage currentTheme={currentTheme} />;
     if (activePage === "versions") return <VersionHistory currentTheme={currentTheme} versions={VERSION_HISTORY} currentVersion={APP_VERSION} />;
     if (activePage === "call") return <CallPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} voiceEnabled={voiceEnabled} isListening={isListening} autoReadResponses={autoReadResponses} onVoiceInput={handleVoiceInput} onVoiceEnabledChange={setVoiceEnabled} onAutoReadResponsesChange={setAutoReadResponses} onLogin={loginWithGoogle} />;
     if (activePage === "uploads") return <UploadsPage currentTheme={currentTheme} uploadedFiles={uploadedFiles} isLoggedIn={isLoggedIn} isUploading={isUploading} onUploadFile={uploadFile} onClearUploads={clearUploads} onLogin={loginWithGoogle} />;
-    if (activePage === "subscriptions") return (
-      <SubscriptionsPage
-        currentTheme={currentTheme}
-        isLoggedIn={isLoggedIn}
-        username={username}
-        accountId={accountId || userId}
-        currentPlan={currentPlan}
-        subscriptionStatus={subscriptionStatus}
-        backendOnline={backendOnline}
-        authToken={authToken}
-        getAuthHeaders={getAuthHeaders}
-        onPlanChanged={(plan, status) => {
-          setCurrentPlan(plan || "free");
-          setSubscriptionStatus(status || "active");
-        }}
-        onLogin={loginWithGoogle}
-      />
-    );
+    if (activePage === "subscriptions") return <SubscriptionsPage currentTheme={currentTheme} isLoggedIn={isLoggedIn} username={username} accountId={isLoggedIn ? accountId || userId : NO_USER_ID} currentPlan={currentPlan} subscriptionStatus={subscriptionStatus} backendOnline={backendOnline} authToken={authToken || supabaseSession?.access_token || ""} getAuthHeaders={getAuthHeaders} onPlanChanged={(plan, status) => { setCurrentPlan(plan || "free"); setSubscriptionStatus(status || "active"); }} onLogin={loginWithGoogle} />;
     return null;
   }
+
+  if (isCaptchaPage) return <CaptchaPage />;
 
   if (isBooting) {
     return (
@@ -1868,11 +1555,7 @@ if (isCaptchaPage) {
             <p className="mt-6 text-xs uppercase tracking-[0.35em] opacity-60">UCNMVC</p>
             <h1 className="mt-3 text-4xl font-bold tracking-[0.2em]">PROJECT EDEN</h1>
             <p className="mt-4 text-sm opacity-70">Loading private AI interface...</p>
-            <div className="mt-6 flex justify-center gap-2">
-              <span className="eden-boot-dot h-3 w-3 rounded-full bg-white" />
-              <span className="eden-boot-dot h-3 w-3 rounded-full bg-white [animation-delay:120ms]" />
-              <span className="eden-boot-dot h-3 w-3 rounded-full bg-white [animation-delay:240ms]" />
-            </div>
+            <div className="mt-6 flex justify-center gap-2"><span className="eden-boot-dot h-3 w-3 rounded-full bg-white" /><span className="eden-boot-dot h-3 w-3 rounded-full bg-white [animation-delay:120ms]" /><span className="eden-boot-dot h-3 w-3 rounded-full bg-white [animation-delay:240ms]" /></div>
           </div>
         </div>
       </main>
@@ -1882,11 +1565,7 @@ if (isCaptchaPage) {
   return (
     <main className={`h-screen overflow-hidden transition-all duration-500 ${currentTheme.bg} ${currentTheme.accent}`}>
       <style>{appStyles}</style>
-      {!audioUnlocked ? (
-        <button type="button" onClick={unlockAudio} className="fixed bottom-5 right-5 z-[1001] rounded-2xl border border-white/10 bg-white px-5 py-3 text-sm font-bold text-black shadow-2xl transition hover:scale-[1.02]">
-          Enable Sounds
-        </button>
-      ) : null}
+      {!audioUnlocked ? <button type="button" onClick={unlockAudio} className="fixed bottom-5 right-5 z-[1001] rounded-2xl border border-white/10 bg-white px-5 py-3 text-sm font-bold text-black shadow-2xl transition hover:scale-[1.02]">Enable Sounds</button> : null}
       <MobileNav currentTheme={currentTheme} profilePic={profilePic} isLoggedIn={isLoggedIn} recentChats={recentChats} activePage={activePage} username={username} onNavigate={setActivePage} onStartNewChat={startNewChat} onLogin={loginWithGoogle} onLogout={confirmLogout} />
       <div className="flex h-screen overflow-hidden pt-[72px] md:pt-0">
         <Sidebar currentTheme={currentTheme} profilePic={profilePic} isLoggedIn={isLoggedIn} recentChats={recentChats} activePage={activePage} backendOnline={backendOnline} onNavigate={setActivePage} onStartNewChat={startNewChat} onLogin={loginWithGoogle} onLogout={confirmLogout} />
@@ -1895,15 +1574,9 @@ if (isCaptchaPage) {
           {renderPage()}
         </section>
       </div>
-      {authPanelOpen ? (
-        <div className="fixed inset-0 z-[1002] overflow-y-auto bg-black/75 p-5 backdrop-blur-sm">
-          <div className="mx-auto mt-8 w-full max-w-5xl">
-            <AuthPanel currentTheme={currentTheme} mode={authPanelMode} onModeChange={setAuthPanelMode} onAuthSuccess={handleAuthSuccess} onClose={closeAuthPanel} onToast={pushToast} />
-          </div>
-        </div>
-      ) : null}
+      {authPanelOpen ? <div className="fixed inset-0 z-[1002] overflow-y-auto bg-black/75 p-5 backdrop-blur-sm"><div className="mx-auto mt-8 w-full max-w-5xl"><AuthPanel currentTheme={currentTheme} mode={authPanelMode} onModeChange={setAuthPanelMode} onAuthSuccess={handleAuthSuccess} onClose={closeAuthPanel} onToast={pushToast} /></div></div> : null}
       <CommandPalette open={commandOpen} currentTheme={currentTheme} recentChats={recentChats} isLoggedIn={isLoggedIn} onClose={() => { setCommandOpen(false); playSound("panelClose", { force: true }); }} onNavigate={setActivePage} onStartNewChat={startNewChat} onOpenChat={openChat} onLogin={loginWithGoogle} />
-      <ConfirmModal open={confirmState.open} currentTheme={currentTheme} title={confirmState.title} description={confirmState.description} confirmLabel={confirmState.confirmLabel} danger={confirmState.danger} onCancel={closeConfirm} onConfirm={() => { if (typeof confirmState.onConfirm === "function") confirmState.onConfirm(); closeConfirm(); }} />
+      <ConfirmModal open={confirmState.open} currentTheme={currentTheme} title={confirmState.title} description={confirmState.description} confirmLabel={confirmState.confirmLabel} danger={confirmState.danger} onCancel={closeConfirm} onConfirm={async () => { const action = confirmState.onConfirm; closeConfirm(); if (typeof action === "function") await action(); }} />
       <ToastStack toasts={toasts} currentTheme={currentTheme} onDismiss={dismissToast} />
     </main>
   );

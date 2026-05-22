@@ -1262,6 +1262,25 @@ if (isCaptchaPage) {
     };
   }, []);
 
+    useEffect(() => {
+  async function loadSupabaseUser() {
+    const { data } = await supabase.auth.getUser();
+    const user = data?.user;
+
+    if (!user) return;
+
+    const profile = await getOrCreateProfile(user);
+
+    setAccountId(profile.account_id);
+    setUsername(profile.username || "User");
+    setEmail(profile.email || "No email connected");
+    setProfilePic(profile.avatar_url || EDEN_ASSETS.placeholders.profile);
+    setCurrentPlan(profile.plan || "free");
+    setSubscriptionStatus(profile.subscription_status || "active");
+  }
+
+  loadSupabaseUser();
+}, []);
   function getAuthHeaders(extra = {}) {
     return { ...extra, Authorization: `Bearer ${authToken}` };
   }

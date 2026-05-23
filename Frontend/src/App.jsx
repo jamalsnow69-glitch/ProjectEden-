@@ -61,7 +61,7 @@ const THEME_PRESETS = [
   { id: "midnight", name: "Midnight", bg: "bg-[#070b16]", card: "bg-[#0d1320]", accent: "text-blue-200", border: "border-blue-400/20" },
   { id: "lava", name: "Lava", bg: "bg-[#1a0803]", card: "bg-[#2a1008]", accent: "text-orange-300", border: "border-orange-400/20" },
   { id: "ice", name: "Ice", bg: "bg-[#04141c]", card: "bg-[#0a2029]", accent: "text-cyan-100", border: "border-cyan-200/20" },
-  { id: "purpur", name: "Purpur", "bg-[#ff00ff]", card: "bg-[#c800ff]", accent: "text=purple-160", border: "border-purple-35/27" },
+  { id: "purpur", name: "Purpur", bg: "bg-[#ff00ff]", card: "bg-[#c800ff]", accent: "text-purple-300", border: "border-purple-400/20" },
 ];
 
 const VERSION_HISTORY = [

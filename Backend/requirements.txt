@@ -19,3 +19,4 @@ pypdf
 itsdangerous
 SQLAlchemy
 psycopg[binary]
+httpx

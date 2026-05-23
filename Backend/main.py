@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from routes.paypal_billing import router as paypal_billing_router
+
 from eden.account_routes import router as account_router, init_account_tables
 from eden.auth import decode_access_token, router as auth_router
 from eden.chats import (
@@ -46,9 +48,16 @@ load_dotenv(ENV_PATH, override=True)
 
 PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "").strip()
 PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "").strip()
-PAYPAL_PLAN_ID = os.getenv("PAYPAL_PLAN_ID", "").strip()
 PAYPAL_MODE = os.getenv("PAYPAL_MODE", "sandbox").strip()
 FRONTEND_URL = os.getenv("FRONTEND_URL", config.FRONTEND_URL).strip().rstrip("/")
+
+PAYPAL_PLAN_IDS = {
+    "pro": os.getenv("PAYPAL_PRO_PLAN_ID", "").strip(),
+    "premium": os.getenv("PAYPAL_PREMIUM_PLAN_ID", "").strip(),
+    "family": os.getenv("PAYPAL_FAMILY_PLAN_ID", "").strip(),
+    "go": os.getenv("PAYPAL_GO_PLAN_ID", "").strip(),
+    "plus": os.getenv("PAYPAL_PLUS_PLAN_ID", "").strip(),
+}
 
 PAYPAL_BASE = (
     "https://api-m.sandbox.paypal.com"

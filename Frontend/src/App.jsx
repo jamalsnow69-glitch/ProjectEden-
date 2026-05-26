@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AuthPanel from "./components/AuthPanel";
 import SubscriptionsPage from "./components/Subscriptions";
 import CaptchaPage from "./pages/CaptchaPage";
@@ -876,7 +876,8 @@ export default function App() {
     }
   }
 
-  function playFallbackTone(name = "success", options = {}) {
+  // FIX: useCallback so playSound is stable across renders — safe to put in useEffect deps
+  const playFallbackTone = useCallback((name = "success", options = {}) => {
     if (options.allowFallback === false) return null;
     if (!useFallbackSounds && !options.forceFallback) return null;
     const context = getAudioContext();
@@ -898,7 +899,7 @@ export default function App() {
       oscillator.stop(context.currentTime + index * 0.055 + 0.11);
     });
     return true;
-  }
+  }, [soundVolume, useFallbackSounds]);
 
   function preloadSounds() {
     Object.entries(EDEN_SOUNDS).forEach(([name, src]) => {
@@ -911,7 +912,8 @@ export default function App() {
     });
   }
 
-  function playSound(name, options = {}) {
+  // FIX: useCallback so it's stable — can be safely listed in useEffect deps
+  const playSound = useCallback((name, options = {}) => {
     if (!soundEnabled && !options.force) return null;
     if (!audioUnlocked && !options.force) return null;
     const src = EDEN_SOUNDS[name];
@@ -934,7 +936,7 @@ export default function App() {
       if (allowFallback) playFallbackTone(name, options);
       return null;
     }
-  }
+  }, [soundEnabled, audioUnlocked, soundVolume, playFallbackTone]);
 
   function unlockAudio(options = {}) {
     preloadSounds();
@@ -985,7 +987,8 @@ export default function App() {
     return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
   }
 
-  async function checkBackendOnline() {
+  // FIX: useCallback so stable reference can be used in useEffect deps
+  const checkBackendOnline = useCallback(async () => {
     if (!API_BASE) {
       setBackendOnline(false);
       return;
@@ -997,12 +1000,14 @@ export default function App() {
     } catch {
       setBackendOnline(false);
     }
-  }
+  }, []);
 
-  async function loadAccount(token = authToken || supabaseSession?.access_token) {
-    if (!token || !API_BASE) return;
+  // FIX: useCallback so stable reference can be used in useEffect deps
+  const loadAccount = useCallback(async (token) => {
+    const activeToken = token || authToken || supabaseSession?.access_token;
+    if (!activeToken || !API_BASE) return;
     try {
-      const response = await fetch(`${API_BASE}/account/me`, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await fetch(`${API_BASE}/account/me`, { headers: { Authorization: `Bearer ${activeToken}` } });
       if (!response.ok) return;
       const data = await response.json();
       const account = data.account || {};
@@ -1014,14 +1019,15 @@ export default function App() {
       setCurrentPlan(subscription.plan || "free");
       setSubscriptionStatus(subscription.status || "active");
     } catch {}
-  }
+  }, [authToken, supabaseSession?.access_token]);
 
-  async function loadBackendChats() {
+  // FIX: useCallback so stable reference can be used in useEffect deps
+  const loadBackendChats = useCallback(async () => {
     try {
       const chats = await loadSupabaseChats();
       setRecentChats(chats.map((chat) => ({ id: chat.id, title: chat.title || "New Chat", createdAt: new Date(chat.created_at || Date.now()).getTime(), updatedAt: new Date(chat.updated_at || chat.created_at || Date.now()).getTime() })));
     } catch {}
-  }
+  }, []);
 
   async function saveBackendMessage(chatId, message) {
     if (!chatId || !message?.text) return;
@@ -1244,13 +1250,19 @@ export default function App() {
             if (parsed.error) throw new Error(parsed.error);
             if (parsed.chunk) {
               fullResponse += parsed.chunk;
+              // FIX: capture updated messages outside setState, then call saveChatMessages separately
+              // — no side effects inside the setState callback
+              const capturedResponse = fullResponse;
+              let updatedMessages = [];
               setMessages((current) => {
                 const updated = [...current];
                 const lastIndex = updated.length - 1;
-                if (updated[lastIndex]?.sender === "eden") updated[lastIndex] = { ...updated[lastIndex], text: fullResponse };
-                saveChatMessages(activeSessionId, updated);
+                if (updated[lastIndex]?.sender === "eden") updated[lastIndex] = { ...updated[lastIndex], text: capturedResponse };
+                updatedMessages = updated;
                 return updated;
               });
+              // saveChatMessages runs after setState, using the local snapshot
+              saveChatMessages(activeSessionId, updatedMessages.length ? updatedMessages : [...pendingMessages.slice(0, -1), { sender: "eden", text: capturedResponse }]);
             }
           }
         }
@@ -1262,13 +1274,17 @@ export default function App() {
         } catch {
           fullResponse = rawText || "Eden returned no response.";
         }
+        // FIX: same pattern — capture outside, then save separately
+        const capturedResponse = fullResponse;
+        let updatedMessages = [];
         setMessages((current) => {
           const updated = [...current];
           const lastIndex = updated.length - 1;
-          if (updated[lastIndex]?.sender === "eden") updated[lastIndex] = { ...updated[lastIndex], text: fullResponse };
-          saveChatMessages(activeSessionId, updated);
+          if (updated[lastIndex]?.sender === "eden") updated[lastIndex] = { ...updated[lastIndex], text: capturedResponse };
+          updatedMessages = updated;
           return updated;
         });
+        saveChatMessages(activeSessionId, updatedMessages.length ? updatedMessages : [...pendingMessages.slice(0, -1), { sender: "eden", text: capturedResponse }]);
       }
       await saveBackendMessage(activeSessionId, { sender: "eden", text: fullResponse || "Eden processed the message but returned no response." });
       if (voiceEnabled && autoReadResponses && fullResponse) window.speechSynthesis.speak(new SpeechSynthesisUtterance(fullResponse));
@@ -1379,11 +1395,12 @@ export default function App() {
     preloadSounds();
   }, []);
 
+  // FIX: checkBackendOnline is now stable via useCallback — safe to add to deps
   useEffect(() => {
     checkBackendOnline();
     const timer = window.setInterval(checkBackendOnline, 30000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [checkBackendOnline]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1420,14 +1437,16 @@ export default function App() {
       pushToast("warning", "2FA required", "Enter your authenticator or backup code.");
     }
     if (token || usernameParam || emailParam || pictureParam || requires2FA || pendingToken) window.history.replaceState({}, document.title, window.location.pathname);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs once on mount only — reads URL params
 
+  // FIX: loadBackendChats and loadAccount are now stable via useCallback — safe in deps
   useEffect(() => {
     if (authToken) {
       loadBackendChats();
       loadAccount(authToken);
     }
-  }, [authToken]);
+  }, [authToken, loadBackendChats, loadAccount]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1446,6 +1465,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem("eden_sound_volume", String(clampVolume(soundVolume))); }, [soundVolume]);
   useEffect(() => { localStorage.setItem("eden_use_fallback_sounds", String(useFallbackSounds)); }, [useFallbackSounds]);
 
+  // FIX: playSound is now stable via useCallback — safe to add to deps
   useEffect(() => {
     function handleKeyDown(event) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -1456,7 +1476,7 @@ export default function App() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [soundEnabled, soundVolume, audioUnlocked, useFallbackSounds]);
+  }, [playSound]);
 
   useEffect(() => {
     return () => {
@@ -1484,7 +1504,9 @@ export default function App() {
         setProfilePic(profile.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture || EDEN_ASSETS.placeholders.profile);
         setCurrentPlan(profile.plan || "free");
         setSubscriptionStatus(profile.subscription_status || "active");
-      } catch {}
+      } catch (err) {
+        if (import.meta.env.DEV) console.error("[Eden] syncSupabaseProfile failed:", err);
+      }
     }
 
     async function loadSupabaseSession() {
@@ -1519,7 +1541,7 @@ export default function App() {
       active = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [loadBackendChats]);
 
   const appStyles = `
     @keyframes edenFadeIn { from { opacity: 0; transform: translateY(10px) scale(0.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
@@ -1582,4 +1604,3 @@ export default function App() {
     </main>
   );
 }
-

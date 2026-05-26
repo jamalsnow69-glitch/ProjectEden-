@@ -94,7 +94,7 @@ const PLANS = [
   {
     id: "family",
     name: "Eden Family",
-    price: "$39.99",
+    price: "$59.99",
     period: "/ month",
     badge: "COMING SOON",
     description: "Maximum Eden — no limits.",
